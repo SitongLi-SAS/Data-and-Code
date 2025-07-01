@@ -1,1 +1,14 @@
+Data Source:
+The official World Development Indicators (WDI) historical archive ZIP files were obtained from:
+
+🔗 https://datatopics.worldbank.org/world-development-indicators/wdi-archives.html
+
+Note: Due to file size limitations on GitHub, the WDI ZIP archives are not included in this repository. Please download them manually and place them in the appropriate folder when running the code (e.g., `WDI_excel_2023_07_25.zip` in the root directory).
+
+Each Case subdirectory includes:
+- Reproduction code (Python scripts and/or `.ipynb`)
+- Cleaned, preprocessed data (public or derived)
+- Figures and visualizations
+- Output report (PDF, HTML, or Markdown)
+- Logs, notes, and documentation for reproducibility
 
