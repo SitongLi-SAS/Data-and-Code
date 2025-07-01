@@ -1,0 +1,229 @@
+---
+title: "R10 Case Reproduction"
+author: "Sitong Li"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  message    = FALSE,
+  warning    = FALSE,
+  fig.width  = 8,
+  fig.height = 4
+)
+```
+
+# 0. Environment and Dependencies
+
+```{r libraries}
+# install.packages(c("forecast", "tseries", "urca", "readr"))
+library(forecast)   # Arima, ets, accuracy, forecast()
+library(tseries)    # adf.test() (backup)
+library(urca)       # ur.df()
+library(readr)      # read_csv()
+
+# Print session info for reproducibility
+sessionInfo()
+```
+
+# 1. Data Loading and Time Series Construction
+
+```{r data-loading}
+data_path <- "R10_data.csv"
+r10_df <- read_csv(data_path, col_types = cols(
+  Year            = col_integer(),
+  LifeExpectancy  = col_double()
+))
+
+# Create ts object: 1960–2020, annual frequency
+leb_ts <- ts(r10_df$LifeExpectancy,
+             start     = min(r10_df$Year),
+             frequency = 1)
+```
+
+# 2. Stationarity Tests and Differencing
+
+## 2.1 ACF and PACF of Original Series
+
+```{r acf-pacf, fig.cap="ACF and PACF of Original Series"}
+par(mfrow = c(2,1))
+Acf(leb_ts,   main = "ACF of Original Series")
+Pacf(leb_ts,  main = "PACF of Original Series")
+par(mfrow = c(1,1))
+```
+
+## 2.2 Augmented Dickey-Fuller Test (urca)
+
+```{r adf-test}
+adf_orig <- ur.df(leb_ts,      type = "drift", selectlags = "AIC")
+adf_d1   <- ur.df(diff(leb_ts), type = "drift", selectlags = "AIC")
+adf_d2   <- ur.df(diff(leb_ts,2), type = "drift", selectlags = "AIC")
+
+adf_stats <- data.frame(
+  Difference = c("Original", "1st diff", "2nd diff"),
+  TestStatistic = c(adf_orig@teststat[1],
+                    adf_d1@teststat[1],
+                    adf_d2@teststat[1]),
+  Crit_1pct = c(adf_orig@cval[1,"1pct"], NA, NA),
+  Crit_5pct = c(NA, adf_d1@cval[1,"5pct"], NA),
+  Crit_10pct= c(NA, NA, adf_d2@cval[1,"10pct"])
+)
+knitr::kable(
+  adf_stats,
+  caption = "ADF test statistics and critical values"
+)
+
+```
+
+# 3. ARIMA(0,2,3) Model Fitting and Diagnostics
+
+## 3.1 Model Fitting (with drift)
+
+```{r fit-arima}
+fit_arima <- Arima(
+  leb_ts,
+  order         = c(0,2,3),
+  include.drift = TRUE,
+  lambda        = NULL
+)
+summary(fit_arima)
+```
+
+## 3.2 Information Criteria and Error Metrics
+
+```{r arima-criteria}
+cat("AIC  =", AIC(fit_arima), "\n")
+cat("AICc =", fit_arima$aicc, "\n")
+cat("BIC  =", BIC(fit_arima), "\n")
+
+acc_arima <- accuracy(fit_arima)
+cat("RMSE  =", round(acc_arima["Training set","RMSE"],4), "\n")
+cat("MAPE% =", round(acc_arima["Training set","MAPE"],2), "%\n")
+
+orders <- list(c(1,1,1), c(1,1,0), c(2,1,0),
+               c(2,1,2), c(1,1,2), c(3,2,0))
+arima_models <- lapply(orders,
+                       function(o) Arima(leb_ts, order = o, include.drift = FALSE))
+arima_tab <- data.frame(
+  Model = sapply(orders, function(o) paste0("ARIMA(", paste(o, collapse=","), ")")),
+  BIC   = sapply(arima_models, BIC),
+  AIC   = sapply(arima_models, AIC),
+  RMSE  = sapply(arima_models, function(m) accuracy(m)[1,"RMSE"]),
+  MAPE  = sapply(arima_models, function(m) accuracy(m)[1,"MAPE"])
+)
+knitr::kable(
+  arima_tab,
+  caption = "Estimated criteria of ARIMA(p,d,q) models"
+)
+```
+
+## 3.3 Residual Diagnostics
+
+```{r arima-residuals, fig.cap="Residual Diagnostics for ARIMA(0,2,3)+drift"}
+checkresiduals(fit_arima)
+```
+
+# 4. Holt Exponential Smoothing (ETS) Fitting and Diagnostics
+
+## 4.1 Model Fitting
+
+```{r fit-ets}
+# Automatic ETS (AAN), equivalent to Holt's method
+fit_ets_auto <- ets(leb_ts, model = "AAN", restrict = FALSE)
+
+# Manual ETS (AAN) with alpha=beta=0.99
+fit_ets_manual <- ets(
+  leb_ts,
+  model    = "AAN",
+  alpha    = 0.99,
+  beta     = 0.99,
+  restrict = FALSE,
+  damped   = FALSE
+)
+```
+
+## 4.2 Information Criteria and Error Metrics
+
+```{r ets-criteria}
+for(m in list(fit_ets_auto, fit_ets_manual)) {
+  cat("\nModel:", m$method, "\n")
+  cat("  AICc =", m$aicc,
+      " AIC =", m$aic,
+      " BIC =", m$bic, "\n")
+  print(accuracy(m)[1,c("RMSE","MAPE")])
+}
+
+ets_tab <- data.frame(
+  Model = c("Holt (auto)", "Holt (manual α=β=0.99)"),
+  AICc  = c(fit_ets_auto$aicc,   fit_ets_manual$aicc),
+  BIC   = c(fit_ets_auto$bic,    fit_ets_manual$bic),
+  RMSE  = c(accuracy(fit_ets_auto)[1,"RMSE"],
+            accuracy(fit_ets_manual)[1,"RMSE"]),
+  MAPE  = c(accuracy(fit_ets_auto)[1,"MAPE"],
+            accuracy(fit_ets_manual)[1,"MAPE"])
+)
+knitr::kable(
+  ets_tab,
+  caption = "Estimated criteria of Holt’s method (ETS AAN)"
+)
+```
+
+## 4.3 Residual Diagnostics
+
+```{r ets-residuals, fig.cap="Residual Diagnostics for ETS AAN"}
+checkresiduals(fit_ets_auto)
+checkresiduals(fit_ets_manual)
+```
+
+# 5. Forecast Comparison for 2021–2030
+
+## 5.1 Generate Forecasts
+
+```{r forecasts}
+h <- 10
+f_arima <- forecast(fit_arima, h = h, level = c(80,95))
+f_ets   <- forecast(fit_ets_manual, h = h, level = c(80,95))
+```
+
+## 5.2 Forecast Table
+
+```{r forecast-table}
+years <- seq(end(leb_ts)[1] + 1, end(leb_ts)[1] + h)
+pred_df <- data.frame(
+  Year   = years,
+  ARIMA  = round(f_arima$mean,2),
+  Lo80_A = round(f_arima$lower[,1],2),
+  Hi80_A = round(f_arima$upper[,1],2),
+  Lo95_A = round(f_arima$lower[,2],2),
+  Hi95_A = round(f_arima$upper[,2],2),
+  Holt   = round(f_ets$mean,2),
+  Lo80_H = round(f_ets$lower[,1],2),
+  Hi80_H = round(f_ets$upper[,1],2),
+  Lo95_H = round(f_ets$lower[,2],2),
+  Hi95_H = round(f_ets$upper[,2],2)
+)
+knitr::kable(pred_df, caption = "Forecast Comparison for 2021–2030")
+```
+
+## 5.3 Forecast Plot
+
+```{r forecast-plot, fig.cap="Historical vs Forecast"}
+plot(leb_ts,
+     xlim = c(1960, 2030),
+     ylim = c(min(r10_df$LifeExpectancy)-1,
+              max(r10_df$LifeExpectancy)+5),
+     main = "Historical vs Forecast",
+     xlab = "Year", ylab = "Life Expectancy")
+lines(f_arima$mean, col = "blue", lty = 2)
+lines(f_ets$mean,   col = "red",  lty = 3)
+legend("topleft",
+       legend = c("Actual","ARIMA(0,2,3)+drift","Holt(α=β=0.99)"),
+       col    = c("black","blue","red"),
+       lty    = c(1,2,3), bty = "n")
+```
