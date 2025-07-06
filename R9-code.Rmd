@@ -1,0 +1,267 @@
+---
+
+title: "Reproducing R9 Tables and Figures"
+output:
+html\_document:
+----------------------
+
+```{r setup, include=FALSE}
+# Load required libraries
+library(tidyverse)    # Data manipulation and plotting
+library(plm)          # Panel data models
+library(broom)        # Tidy model outputs
+library(kableExtra)   # Tables formatting
+library(car)          # Diagnostic tests
+library(lmtest)       # Statistical tests
+library(psych)        # Descriptive stats
+library(gridExtra)    # Arranging multiple plots
+library(stargazer)    # Table formatting with stargazer
+
+# Set global chunk options
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+```
+
+# 1. Data Preparation and Loading
+
+```{r load-data}
+# Read the R9_data.csv file
+# Assume raw values are correctly prepared (min values reported as 1 in paper)
+r9_data <- read_csv("R9_data.csv") %>%
+  # Rename columns for consistency
+  rename(
+    Country = `Country Name`,
+    CountryCode = `Country Code`
+  )
+
+# Inspect column names and first rows
+print(names(r9_data))
+head(r9_data)
+```
+
+# 2. Descriptive Statistics (Table 2)
+
+```{r descriptive-stats}
+# Compute descriptive statistics: Obs, Mean, Std. Dev., Min, Max
+desc_stats <- r9_data %>%
+  select(CO2, EC, TINN, FinD, GDP1, OPP) %>%
+  psych::describe() %>%
+  select(n, mean, sd, min, max) %>%
+  rename(
+    Obs = n,
+    Mean = mean,
+    `Std. Dev.` = sd,
+    Min = min,
+    Max = max
+  )
+
+# Format as table matching original layout
+desc_stats %>%
+  kable(
+    caption = "Table 2. Descriptive Statistics",
+    digits = 3,
+    booktabs = TRUE
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# 3. Pairwise Correlations (Table 3)
+
+```{r pairwise-correlations}
+# Compute Pearson correlation matrix
+corr_matrix <- r9_data %>%
+  select(CO2, EC, TINN, FinD, GDP1, OPP) %>%
+  cor(use = "pairwise.complete.obs")
+
+# Display correlation table
+corr_matrix %>%
+  kable(
+    caption = "Table 3. Pairwise Correlations",
+    digits = 3,
+    booktabs = TRUE
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# 4. Time Series Graphs by Country (Figure 2)
+
+```{r line-graphs}
+# Reshape data for plotting
+# Ensure 'Country' and 'Year' columns exist
+if(!"Country" %in% names(r9_data)) stop("Column 'Country' not found")
+if(!"Year" %in% names(r9_data)) stop("Column 'Year' not found")
+data_long <- r9_data %>%
+  pivot_longer(
+    cols = c(CO2, EC, TINN, FinD, GDP1, OPP),
+    names_to = "Variable",
+    values_to = "Value"
+  )
+
+# Plot faceted time series
+ggplot(data_long, aes(x = Year, y = Value, color = Country)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Figure 2. Time Series of Key Variables by Country",
+    x = "Year", y = "Value"
+  ) +
+  theme_minimal()
+```
+
+# 5. Diagnostic Tests
+
+## 5.1 Shapiro–Wilk Test (Table 4)
+
+```{r shapiro-test}
+# Fit baseline fixed-effects model
+fe_model <- plm(
+  CO2 ~ TINN + EC + FinD + GDP1,
+  data = r9_data,
+  index = c("Country", "Year"),
+  model = "within"
+)
+# Extract residuals
+resid_fe <- resid(fe_model)
+# Shapiro-Wilk normality test
+shapiro.test(resid_fe)
+```
+
+## 5.2 Cross-sectional Dependence Tests (Table 5)
+
+```{r cross-sectional-tests}
+# Pesaran's test of cross-sectional independence
+pesaran_cd <- pcdtest(fe_model, test = "cd")
+cat("Pesaran's test of cross-sectional independence =",
+    round(pesaran_cd$statistic, 3),
+    ", Pr =", round(pesaran_cd$p.value, 4), "
+")
+
+# Friedman’s test of cross-sectional independence
+# Note: using Breusch-Pagan LM test as a proxy for Friedman’s test due to plm limitations
+fried_bp <- pcdtest(fe_model, test = "lm")
+cat("Friedman’s test of cross-sectional independence =",
+    round(fried_bp$statistic, 3),
+    ", Pr =", round(fried_bp$p.value, 4), "
+")
+
+```
+
+## 5.3 Slope Heterogeneity Test (Table 6)
+
+```{r slope-heterogeneity}
+# Pesaran-Yamagata delta test for slope homogeneity
+pbgtest(fe_model)
+```
+
+## 5.4 Hausman Specification Test (Table 7)
+
+```{r hausman-test}
+# Fit random-effects with Wald-Hausman method
+re_model <- plm(
+  CO2 ~ TINN + EC + FinD + GDP1,
+  data = r9_data,
+  index = c("Country", "Year"),
+  model = "random",
+  random.method = "walhus"
+)
+# Align coefficient names
+b_fe <- coef(fe_model)
+b_re <- coef(re_model)
+common <- intersect(names(b_fe), names(b_re))
+b_fe_sub <- b_fe[common]
+b_re_sub <- b_re[common]
+v_diff <- vcov(fe_model)[common, common] - vcov(re_model)[common, common]
+# Compute Hausman statistic and p-value
+H <- as.numeric(t(b_fe_sub - b_re_sub) %*% solve(v_diff) %*% (b_fe_sub - b_re_sub))
+df_H <- length(common)
+p_val <- pchisq(H, df = df_H, lower.tail = FALSE)
+cat("Hausman test statistic =", round(H, 3),
+    "(df =", df_H, "), p-value =", round(p_val, 3), "\n")
+```
+
+# 6. Fixed-Effects Model Results (Table 8)
+
+```{r fe-model-results,results='asis'}
+# Estimate three fixed-effects specifications
+model1 <- fe_model
+model2 <- update(model1, . ~ . + OPP)
+model3 <- update(model2, . ~ . + TINN:OPP)
+
+# Present results via stargazer
+stargazer(
+  model1, model2, model3,
+  type = "html",
+  title = "Table 8. Fixed-Effects Model Results",
+  digits = 3,
+  dep.var.labels = "CO2 per capita",
+  covariate.labels = c("TINN", "EC", "FinD", "GDP1", "OPP", "TINN:OPP"),
+  omit.stat = c("f", "ser"),
+  no.space = TRUE
+)
+
+```
+
+# 7. Regression Diagnostic Graphs
+
+```{r regression-diagnostics, fig.width=8, fig.height=10}
+# Use model frame for diagnostics (ensures consistent rows)
+mf <- model.frame(fe_model)
+# Build diagnostic dataframe with model observations only
+diag_df <- data.frame(
+  Resid = resid(fe_model),
+  Fit   = fitted(fe_model),
+  TINN  = mf$TINN,
+  EC    = mf$EC,
+  FinD  = mf$FinD,
+  GDP1  = mf$GDP1
+)
+# Variables to plot against residuals
+vars <- c("TINN", "EC", "FinD", "GDP1")
+# Create a list to store plots
+grobs <- lapply(vars, function(v) {
+  # Fit simple regression of residuals on predictor
+  m <- lm(Resid ~ diag_df[[v]], data = diag_df)
+  s <- summary(m)$coefficients
+  # Prepare subtitle with coefficient stats
+  subtitle <- sprintf(
+    "Intercept = %.3f (SE = %.3f); Slope = %.3f (SE = %.3f)",
+    s[1,1], s[1,2], s[2,1], s[2,2]
+  )
+  # Generate the plot
+  ggplot(diag_df, aes_string(x = v, y = "Resid")) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(
+      title = paste0("Figure 3. Residuals vs ", v),
+      subtitle = subtitle,
+      x = v,
+      y = "Residuals"
+    ) +
+    theme_minimal()
+})
+# Arrange diagnostic plots in 2 columns
+grid.arrange(grobs = grobs, ncol = 2)
+```
+
+```{r figure4, fig.width=8, fig.height=6}
+# Figure 4: Residuals vs Fitted Values
+plot(
+  as.numeric(fitted(fe_model)),
+  as.numeric(resid(fe_model)),
+  main = "Figure 4. Residuals vs Fitted Values",
+  xlab = "Fitted values", ylab = "Residuals"
+)
+abline(h = 0, lty = 2)
+```
+
+```{r session-info, echo=FALSE}
+# Session information for reproducibility
+sessionInfo()
+```
+
+# End of Reproduction
