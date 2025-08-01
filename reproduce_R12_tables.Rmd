@@ -1,0 +1,319 @@
+---
+title: "Reproducing R12 Tables 2–10"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+# Load required libraries
+library(readr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(modelsummary)
+
+# Read in the simulated datasets
+annual <- read_csv("ukraine_lf.csv")
+monthly <- read_csv("ukraine_hf.csv")
+forecasts <- read_csv("ukraine_forecasts.csv")
+# Ensure 'year' column is numeric for joins
+forecasts <- forecasts %>% mutate(year = as.integer(year))
+employment <- read_csv("employment_rise.csv") %>% 
+  mutate(
+    year = as.integer(year),
+    population_55_59 = as.numeric(population_55_59),
+    participation_rate = as.numeric(participation_rate),
+    unemployment_rate = as.numeric(unemployment_rate),
+    new_employment = as.numeric(new_employment)
+  )
+```
+
+## Table 2: Ukraine’s GDP account, WDI data (million UAH, 2003 Constant Prices)
+
+```{r table2, echo=TRUE}
+# Compute expenditure-based GDP and discrepancy for 2001–2008
+table2 <- annual %>%
+  filter(year >= 2001, year <= 2008) %>%
+  mutate(
+    GDP_exp    = C + I + G + (EXP - IMP),
+    discrepancy = (GDP_exp - Y) / Y * 100
+  ) %>%
+  select(
+    Year = year,
+    Consumption = C,
+    Investment   = I,
+    Gov_Expend   = G,
+    Exports      = EXP,
+    Imports      = IMP,
+    GDP_Exp      = GDP_exp,
+    GDP_Prod     = Y,
+    Discrepancy  = discrepancy
+  )
+
+kable(
+  table2,
+  caption = "Ukraine’s GDP account, WDI data (million UAH, 2003 Constant Prices)",
+  digits = 2,
+  booktabs = TRUE
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 3: Ukraine’s GDP account, WDI data (million UAH, Current Prices)
+
+```{r table3, echo=TRUE}
+# Repeat the same computation as proxy for current prices
+table3 <- annual %>%
+  filter(year >= 2001, year <= 2008) %>%
+  mutate(
+    GDP_exp    = C + I + G + (EXP - IMP),
+    discrepancy = (GDP_exp - Y) / Y * 100
+  ) %>%
+  select(
+    Year = year,
+    Consumption = C,
+    Investment   = I,
+    Gov_Expend   = G,
+    Exports      = EXP,
+    Imports      = IMP,
+    GDP_Exp      = GDP_exp,
+    GDP_Prod     = Y,
+    Discrepancy  = discrepancy
+  )
+
+kable(
+  table3,
+  caption = "Ukraine’s GDP account, WDI data (million UAH, Current Prices)",
+  digits = 2,
+  booktabs = TRUE
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+
+## Explanation of Table 2 and Table 3 Consistency and Original Differences
+
+**Explanation:** In our current simulation script, we use the same `annual` dataset to compute both Table 2 (2003 constant‑price series) and Table 3 (current‑price series) GDP components and their discrepancies. Since we have not applied a CPI deflator or maintained two distinct series (constant‑price vs. nominal‑price), both tables reference identical numeric columns, resulting in identical outputs.
+
+**Original R12 Context:** In the original R12 paper, Table 2 and Table 3 draw on two separate WDI series:
+
+1. **Table 2 (Constant Prices):** Uses the 2003 constant‑price series to remove inflation effects, reflecting real changes in output and expenditure.
+2. **Table 3 (Current Prices):** Uses the nominal series, which includes inflation and therefore displays higher annual values than the constant‑price series.
+
+The divergence between real and nominal series leads to different computed expenditure‑based GDP (`C + I + G + (EXP - IMP)`) and discrepancy ratios relative to production‑based GDP (`Y`), making Tables 2 and 3 different in the original paper.
+
+## Impact of Not Fully Reproducing Table 3
+
+**Impact Analysis:** Since the current data still applies constant-price data to Table 3 (nominal price series) without introducing a separate nominal series, all subsequent calculations and estimations that rely on nominal values are based on constant-price approximations:
+
+1. **Expenditure-based GDP discrepancy test** (Table 3) should use nominal series; using constant-price values will cause inconsistencies when compared to official nominal statistics.
+2. **High-frequency model expenditure composition** (Table 7), which estimates relationships for nominal variables (CN, I, G, EXP, IMP), will rely on constant-price simulations, potentially yielding coefficients that differ from those in the original analysis.
+3. **Growth rates and forecasts** (Table 8/9) nominal growth comparisons (against official forecasts and IMF projections) should be based on nominal GDP; computing year-on-year growth from constant-price GDP will produce different magnitudes and trends.
+
+## Table 4: Variables of Ukraine’s LF Model
+
+```{r table4, echo=TRUE}
+# List endogenous vs exogenous variables, units and sources
+table4 <- tribble(
+  ~Variable, ~Type,           ~Unit,            ~Source,
+  "Y",       "Endogenous",    "Million UAH",    "WDI",
+  "C",       "Endogenous",    "Million UAH",    "WDI",
+  "I",       "Endogenous",    "Million UAH",    "WDI",
+  "G",       "Endogenous",    "Million UAH",    "WDI",
+  "EXP",     "Endogenous",    "Million UAH",    "WDI",
+  "IMP",     "Endogenous",    "Million UAH",    "WDI",
+  "LF",      "Endogenous",    "Persons",        "Ukrstat",
+  "N",       "Exogenous",     "Million",        "Ukrstat",
+  "R",       "Exogenous",     "UAH per USD",    "WDI",
+  "P",       "Exogenous",     "Index",          "WDI",
+  "M",       "Exogenous",     "Million UAH",    "WDI",
+  "INT",     "Exogenous",     "Percent",        "WDI",
+  "INR",     "Exogenous",     "Million USD",    "WDI",
+  "E",       "Exogenous",     "Kiloton oil eq.", "WDI",
+  "STR",     "Exogenous",     "Million UAH",    "WDI"
+)
+
+kable(
+  table4,
+  caption = "Variables of Ukraine’s LF Model",
+  booktabs = TRUE
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 5: Ukraine’s LF Macroeconometric Model
+
+```{r table5, warning=FALSE, message=FALSE}
+# Subset annual data for estimation: 1997–2009
+lf_data <- annual %>% filter(year >= 1997, year <= 2009)
+
+# Estimate structural equations
+mod_prod <- lm(log(Y) ~ log(K) + log(L) + log(E), data = lf_data)
+mod_cons <- lm(C ~ GM + INR + R, data = lf_data)
+mod_inv  <- lm(I ~ GM + INR + R, data = lf_data)
+mod_exp  <- lm(EXP ~ GM + INR + R, data = lf_data)
+mod_imp  <- lm(IMP ~ GM + INR + R, data = lf_data)
+
+# Combine models
+models <- list(
+  "Production (log Y)" = mod_prod,
+  "Consumption (C)"    = mod_cons,
+  "Investment (I)"     = mod_inv,
+  "Exports (EXP)"      = mod_exp,
+  "Imports (IMP)"      = mod_imp
+)
+
+modelsummary(
+  models,
+  output = "kableExtra",
+  caption = "Ukraine’s LF Macroeconometric Model",
+  stars = TRUE,
+  statistic = "std.error"
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 6: Variables of Ukraine’s HF Model
+
+```{r table6, echo=TRUE}
+# List monthly endogenous vs exogenous variables
+table6 <- tribble(
+  ~Variable, ~Type,         ~Unit,           ~Source,
+  "Y",       "Endogenous",  "Million UAH",   "NBU/Ukrstat",
+  "CN",      "Endogenous",  "Million UAH",   "NBU",
+  "I",       "Endogenous",  "Million UAH",   "NBU",
+  "EXP",     "Endogenous",  "Million UAH",   "NBU",
+  "IMP",     "Endogenous",  "Million UAH",   "NBU",
+  "W",       "Endogenous",  "Million UAH",   "NBU",
+  "MAN",     "Endogenous",  "Index",         "Ukrstat",
+  "CNT",     "Endogenous",  "Index",         "Ukrstat",
+  "AGR",     "Endogenous",  "Index",         "Ukrstat",
+  "UR",      "Exogenous",   "Percent",       "ILO/WDI",
+  "INT",     "Exogenous",   "Percent",       "NBU",
+  "R",       "Exogenous",   "UAH per USD",   "NBU",
+  "G",       "Exogenous",   "Million UAH",   "NBU",
+  "MET",     "Exogenous",   "Index",         "Ukrstat"
+)
+
+kable(
+  table6,
+  caption = "Variables of Ukraine’s HF Model",
+  booktabs = TRUE
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 7: Ukraine’s HF Macroeconometric Model
+
+```{r table7, warning=FALSE, message=FALSE}
+# Monthly data for estimation: 2002-01 to 2009-12
+hf_data <- monthly
+
+# Estimate model equations
+mod_ypro <- lm(Y_pro ~ MAN + CNT + AGR, data = hf_data)
+mod_cn   <- lm(CN    ~ Y     + G,   data = hf_data)
+mod_i    <- lm(I     ~ Y     + INT, data = hf_data)
+mod_exp  <- lm(EXP   ~ AGR   + MET, data = hf_data)
+mod_imp  <- lm(IMP   ~ R,            data = hf_data)
+
+models_hf <- list(
+  "Prod. (Y_pro)" = mod_ypro,
+  "Consumption"   = mod_cn,
+  "Investment"    = mod_i,
+  "Exports"       = mod_exp,
+  "Imports"       = mod_imp
+)
+
+modelsummary(
+  models_hf,
+  output = "kableExtra",
+  caption = "Ukraine’s HF Macroeconometric Model",
+  stars = TRUE,
+  statistic = "std.error"
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 8: Ukraine’s GDP growth rates for 2005 and 2006, percent
+
+```{r table8, echo=TRUE}
+# Compute year‐on‐year GDP growth and merge with forecasts
+growth <- annual %>%
+  arrange(year) %>%
+  mutate(growth = (Y / lag(Y) - 1) * 100)
+
+table8 <- forecasts %>%
+  left_join(
+    growth %>% filter(year %in% c(2005, 2006)) %>%
+    select(year, Actual = growth),
+    by = c("year")
+  ) %>%
+  rename(
+    Ministry = ministry,
+    IMF      = imf,
+    ExPost   = expost
+  ) %>%
+  select(
+    Year = year,
+    Actual,
+    Ministry,
+    IMF,
+    ExPost
+  )
+
+kable(
+  table8,
+  caption = "Ukraine’s GDP growth rates for 2005 and 2006, percent",
+  digits = 2,
+  booktabs = TRUE
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 9: Ukraine’s 2011–2015 growth forecast, percent
+
+```{r table9, echo=TRUE}
+# Compute growth for 2011–2015
+table9 <- growth %>%
+  filter(year >= 2011, year <= 2015) %>%
+  select(
+    Year = year,
+    Growth = growth
+  )
+
+kable(
+  table9,
+  caption = "Ukraine’s 2011–2015 growth forecast, percent",
+  digits = 2,
+  booktabs = TRUE
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 10: Computation of annual rise in employment
+
+```{r table10, echo=TRUE}
+# Calculate new employment from population forecasts
+employment_calc <- employment %>%
+  mutate(
+    New_Labour     = population_55_59 * participation_rate,
+    New_Employment = New_Labour * (1 - unemployment_rate)
+  ) %>%
+  select(
+    Year = year,
+    Population_55_59 = population_55_59,
+    Participation_Rate = participation_rate,
+    Unemployment_Rate = unemployment_rate,
+    New_Employment
+  )
+
+kable(
+  employment_calc,
+  caption = "Computation of annual rise in employment",
+  digits = 2,
+  booktabs = TRUE
+) %>%
+  kable_styling(full_width = FALSE)
+```
