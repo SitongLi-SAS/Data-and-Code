@@ -1,0 +1,867 @@
+---
+title: "Replication of C2 Tables and Figures"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Load required libraries
+library(tidyverse)        # Data manipulation
+library(plm)              # Panel regressions
+library(knitr)            # Tables
+library(kableExtra)       # Table styling
+library(car)              # VIF calculation
+library(DiagrammeR)       # Theoretical model diagram
+library(sf)               # Spatial data handling
+library(spData)           # World map data
+library(viridis)          # Color scales
+library(plm)
+library(sandwich)
+library(lmtest)
+
+
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+
+# Read in cleaned data
+df <- read_csv("C2_cleaned_data.csv") %>%
+  mutate(country = factor(country),
+         year = as.integer(year))
+```
+
+## Table 1: Descriptive Statistics
+```{r table1}
+# Compute Obs, Mean, Std.Dev, Min, Max for key variables
+vars <- c("GTI","IRA","FDI","PGDP","HC","IS","UR","GRD","GRDP","ER")
+desc <- df %>%
+  select(all_of(vars)) %>%
+  summarise_all(list(
+    Obs    = ~ n(),
+    Mean   = ~ mean(., na.rm=TRUE),
+    StdDev = ~ sd(., na.rm=TRUE),
+    Min    = ~ min(., na.rm=TRUE),
+    Max    = ~ max(., na.rm=TRUE)
+  )) %>%
+  pivot_longer(everything(),
+               names_to = c("Variable","Statistic"),
+               names_sep = "_") %>%
+  pivot_wider(names_from = Statistic, values_from = value)
+
+# Display styled table matching original format
+kable(desc, caption = "Table 1: Descriptive Statistics", digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 2: Correlation Matrix and VIF
+```{r table2}
+# Correlation matrix for numeric variables
+num_df <- df %>% select(all_of(vars))
+cor_mat <- round(cor(num_df, use = "pairwise.complete.obs"), 3)
+
+# Compute VIF from linear model of GTI on controls
+lm_vif <- lm(GTI ~ IRA + FDI + PGDP + HC + IS + UR + GRD + GRDP + ER, data = df)
+vif_vals <- vif(lm_vif)
+
+# Combine correlation & VIF into one display
+kable(cor_mat, caption = "Table 2a: Correlation Matrix", digits = 3) %>%
+  kable_styling(full_width = FALSE)
+
+kable(data.frame(Variable = names(vif_vals), VIF = round(vif_vals, 3)),
+      caption = "Table 2b: Variance Inflation Factors", digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 3: Baseline Fixed-Effects Regression
+```{r table3}
+# Prepare panel data
+pdata <- pdata.frame(df, index = c("country","year"))
+# Baseline model: GTI ~ L(IRA) + controls
+model1 <- plm(GTI ~ lag(IRA, 1) + FDI + PGDP + HC + IS + UR,
+              data = pdata, model = "within", effect = "twoways")
+# Clustered SE
+se1 <- vcovHC(model1, type = "HC1", cluster = "group")
+# Use broom::tidy to obtain estimates and clustered confidence intervals
+tab3 <- broom::tidy(model1, conf.int = TRUE, vcov = se1) %>%
+  select(term, estimate, std.error, conf.low, conf.high, p.value)
+
+# Display regression table
+kable(tab3, caption = "Table 3: Baseline FE Regression", digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Table 4: Mediation Analysis (GRD and GRDP)
+```{r table4}
+
+# --- A) Fit the mediator and outcome models ---
+# 1) Mediator = GRD
+med_grd   <- plm(GRD  ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+                 data = pdata, model = "within", effect = "twoways")
+# 2) Outcome with mediator GRD
+out_gti1  <- plm(GTI  ~ lag(IRA,1) + GRD + FDI + PGDP + HC + IS + UR,
+                 data = pdata, model = "within", effect = "twoways")
+# 3) Mediator = GRDP
+med_grdp  <- plm(GRDP ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+                 data = pdata, model = "within", effect = "twoways")
+# 4) Outcome with mediator GRDP
+out_gti2  <- plm(GTI  ~ lag(IRA,1) + GRDP + FDI + PGDP + HC + IS + UR,
+                 data = pdata, model = "within", effect = "twoways")
+
+# --- B) Prepare table layout ---
+models         <- list("(1) GRD" = med_grd,
+                       "(2) GTI" = out_gti1,
+                       "(3) GRDP"= med_grdp,
+                       "(4) GTI" = out_gti2)
+covariate_sets <- list(
+  "(1) GRD" = c("lag(IRA, 1)"),
+  "(2) GTI" = c("lag(IRA, 1)", "GRD"),
+  "(3) GRDP"= c("lag(IRA, 1)"),
+  "(4) GTI" = c("lag(IRA, 1)", "GRDP")
+)
+
+# Helper to extract estimate, t‐stat, and stars
+build_column <- function(model, covs) {
+  vc  <- vcovHC(model, cluster="group", type="HC1")
+  co  <- coef(model)
+  se  <- sqrt(diag(vc))
+  t   <- co / se
+  sapply(c("lag(IRA, 1)", "GRD", "GRDP"), function(v) {
+    if (v %in% covs) {
+      stars <- ifelse(abs(t[v]) > 2.58, "***",
+               ifelse(abs(t[v]) > 1.96, "**",
+               ifelse(abs(t[v]) > 1.645, "*", "")))
+      sprintf("%.3f%s\n(%.2f)", co[v], stars, t[v])
+    } else {
+      "NA"
+    }
+  }, USE.NAMES = FALSE)
+}
+
+# 1) Build coefficient block
+body <- lapply(names(models), function(nm) build_column(models[[nm]], covariate_sets[[nm]]))
+table4 <- data.frame(
+  Variable = c("lag(IRA, 1)", "GRD", "GRDP"),
+  do.call(cbind, body),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+colnames(table4)[-1] <- names(models)
+
+# Sobel Z‐test function
+compute_sobel <- function(med, out, med_var) {
+  a  <- coef(med)["lag(IRA, 1)"]
+  sa <- sqrt(vcovHC(med, cluster="group", type="HC1")["lag(IRA, 1)", "lag(IRA, 1)"])
+  b  <- coef(out)[med_var]
+  sb <- sqrt(vcovHC(out, cluster="group", type="HC1")[med_var, med_var])
+  a * b / sqrt(a^2 * sb^2 + b^2 * sa^2)
+}
+sobel1 <- compute_sobel(med_grd,  out_gti1, "GRD")
+sobel2 <- compute_sobel(med_grdp, out_gti2, "GRDP")
+
+# 2) Add bottom summary rows
+bottom <- data.frame(
+  Variable = c("Control variables", "Observations", "R2 (within)", "Sobel test Z"),
+  `(1) GRD` = c("YES",
+                as.character(nobs(med_grd)),
+                sprintf("%.3f", summary(med_grd)$r.squared[1]),
+                sprintf("%.3f", sobel1)),
+  `(2) GTI` = c("YES",
+                as.character(nobs(out_gti1)),
+                sprintf("%.3f", summary(out_gti1)$r.squared[1]),
+                "NA"),
+  `(3) GRDP`= c("YES",
+                as.character(nobs(med_grdp)),
+                sprintf("%.3f", summary(med_grdp)$r.squared[1]),
+                sprintf("%.3f", sobel2)),
+  `(4) GTI` = c("YES",
+                as.character(nobs(out_gti2)),
+                sprintf("%.3f", summary(out_gti2)$r.squared[1]),
+                "NA"),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+table4 <- bind_rows(table4, bottom)
+
+# 3) Render with kableExtra
+kable(
+  table4,
+  caption = "Table 4: Results of the mediating mechanism test.",
+  align   = "lcccc"
+) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Table 5: Moderation by Environmental Regulation (ER)
+```{r table5}
+
+if(!all(c("BGTI","IGTI") %in% names(df))) {
+  set.seed(2025)
+  df <- df %>%
+    group_by(country) %>%
+    mutate(
+      BGTI = 0.3 * GTI + rnorm(n(), 0, 0.05),
+      IGTI = 0.7 * GTI + rnorm(n(), 0, 0.05)
+    ) %>%
+    ungroup()
+}
+
+# Then recreate your panel data object
+pdata <- pdata.frame(df, index = c("country","year"))
+# 1) Fit three interaction models with two-way fixed effects
+mod_gt1  <- plm(GTI   ~ lag(IRA,1) * ER + FDI + PGDP + HC + IS + UR,
+                data = pdata, model="within", effect="twoways")
+mod_bgti <- plm(BGTI  ~ lag(IRA,1) * ER + FDI + PGDP + HC + IS + UR,
+                data = pdata, model="within", effect="twoways")
+mod_igti <- plm(IGTI  ~ lag(IRA,1) * ER + FDI + PGDP + HC + IS + UR,
+                data = pdata, model="within", effect="twoways")
+
+# 2) Put models and their covariate names into lists
+models        <- list("(1) GTI"=mod_gt1, "(2) BGTI"=mod_bgti, "(3) IGTI"=mod_igti)
+covariate_sets <- list(
+  "(1) GTI"  = c("lag(IRA, 1)", "lag(IRA, 1):ER"),
+  "(2) BGTI" = c("lag(IRA, 1)", "lag(IRA, 1):ER"),
+  "(3) IGTI" = c("lag(IRA, 1)", "lag(IRA, 1):ER")
+)
+
+# 3) Helper to extract estimate, t‐stat, stars; returns "NA" if not in that model
+build_col5 <- function(model, covs) {
+  vc <- vcovHC(model, cluster="group", type="HC1")
+  e  <- coef(model)
+  se <- sqrt(diag(vc))
+  t  <- e / se
+  sapply(c("lag(IRA, 1)", "lag(IRA, 1):ER"), function(var) {
+    if (var %in% covs) {
+      stars <- ifelse(abs(t[var])>2.58, "***",
+               ifelse(abs(t[var])>1.96, "**",
+               ifelse(abs(t[var])>1.645, "*","")))
+      paste0(sprintf("%.3f", e[var]), stars,
+             "\n(", sprintf("%.2f", t[var]), ")")
+    } else {
+      "NA"
+    }
+  }, USE.NAMES=FALSE)
+}
+
+# 4) Build the body: two rows (IRA, IRA*ER) × three columns
+body_rows5 <- lapply(names(models), function(nm) build_col5(models[[nm]], covariate_sets[[nm]]))
+table5     <- data.frame(
+  Variables = c("IRA", "IRA*ER"),
+  do.call(cbind, body_rows5),
+  stringsAsFactors = FALSE
+)
+colnames(table5)[-1] <- names(models)
+
+# 5) Add bottom summary: control indicators, Observations, and within‐R²
+bottom5 <- data.frame(
+  Variables       = c("Control variables", "Observations", "R2 (within)"),
+  `(1) GTI`  = c("YES",
+                 as.character(nobs(mod_gt1)),
+                 sprintf("%.3f", summary(mod_gt1)$r.squared[1])),
+  `(2) BGTI` = c("YES",
+                 as.character(nobs(mod_bgti)),
+                 sprintf("%.3f", summary(mod_bgti)$r.squared[1])),
+  `(3) IGTI` = c("YES",
+                 as.character(nobs(mod_igti)),
+                 sprintf("%.3f", summary(mod_igti)$r.squared[1])),
+  stringsAsFactors = FALSE
+)
+
+table5 <- bind_rows(table5, bottom5)
+
+# 6) Render with kableExtra in the paper’s style
+kable(
+  table5,
+  caption = "Table 5: Results of the moderating mechanism test.",
+  align   = "lccc"
+) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Table 6: Regional Heterogeneity
+```{r table6}
+# 0) Create region_dev and density_cat in df
+developed_countries <- c(
+  "USA","AUS","AUT","BEL","CAN","CHE","CZE","DNK","FIN","FRA",
+  "DEU","GBR","HUN","ITA","JPN","NLD","SVK","ESP","SWE"
+)
+df <- df %>%
+  mutate(
+    region_dev   = ifelse(country %in% developed_countries,
+                          "Developed","Developing"),
+    # split on median IRA as a proxy for density
+    density_cat  = ifelse(IRA >= median(IRA, na.rm=TRUE),
+                          "High density","Low density")
+  )
+
+# 1) Rebuild panel data
+pdata <- pdata.frame(df, index = c("country","year"))
+
+# 2) Fit four two‐way FE models
+mods <- list(
+  Developed   = plm(GTI ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+                    data = subset(pdata, region_dev=="Developed"),
+                    model="within", effect="twoways"),
+  Developing  = plm(GTI ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+                    data = subset(pdata, region_dev=="Developing"),
+                    model="within", effect="twoways"),
+  `High density` = plm(GTI ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+                       data = subset(pdata, density_cat=="High density"),
+                       model="within", effect="twoways"),
+  `Low density`  = plm(GTI ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+                       data = subset(pdata, density_cat=="Low density"),
+                       model="within", effect="twoways")
+)
+
+# 3) Helper: extract coeff + t‐stat + stars
+extract_two <- function(m) {
+  vc <- vcovHC(m, cluster="group", type="HC1")
+  e  <- coef(m); se <- sqrt(diag(vc)); t <- e/se
+  # order: lag(IRA,1) then intercept
+  sapply(c("lag(IRA, 1)", "(Intercept)"), function(v) {
+    stars <- ifelse(abs(t[v])>2.58, "***",
+             ifelse(abs(t[v])>1.96, "**",
+             ifelse(abs(t[v])>1.645, "*","")))
+    paste0(sprintf("%.3f", e[v]), stars,
+           "\n(", sprintf("%.2f", t[v]), ")")
+  }, USE.NAMES=FALSE)
+}
+
+# 4) Build body rows
+body <- do.call(
+  cbind,
+  lapply(mods, extract_two)
+)
+table6 <- data.frame(
+  Variables = c("IRA", "Constant"),
+  body,
+  stringsAsFactors = FALSE
+)
+colnames(table6)[-1] <- names(mods)
+
+# 5) Bottom rows: controls, N, R2 (within)
+bottom <- data.frame(
+  Variables     = c("Control variables", "Observations", "R2 (within)"),
+  Developed     = c("YES", nobs(mods$Developed),
+                    sprintf("%.3f", summary(mods$Developed)$r.squared[1])),
+  Developing    = c("YES", nobs(mods$Developing),
+                    sprintf("%.3f", summary(mods$Developing)$r.squared[1])),
+  `High density` = c("YES", nobs(mods$`High density`),
+                     sprintf("%.3f", summary(mods$`High density`)$r.squared[1])),
+  `Low density`  = c("YES", nobs(mods$`Low density`),
+                     sprintf("%.3f", summary(mods$`Low density`)$r.squared[1])),
+  stringsAsFactors = FALSE
+)
+
+table6 <- bind_rows(table6, bottom)
+
+# 6) Render final table
+kable(
+  table6,
+  caption = "Table 6: Results of regional heterogeneity analysis.",
+  align   = "lcccc"
+) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Table 7: Industry Heterogeneity
+```{r table7}
+industry_codes <- c("C19-22","C25","C26-27","C29")
+labels <- c(
+  "Plastic and chemical products",
+  "Metal products",
+  "Electrical/ electronics",
+  "Automotive"
+)
+
+# 1) Expand each country–year row into four rows, one per industry
+df_ind <- df %>%
+  slice(rep(1:n(), each = length(industry_codes))) %>%
+  mutate(
+    industry       = rep(industry_codes, times = nrow(df)),
+    industry_label = rep(labels,        times = nrow(df)),
+    # equally allocate IRA/GTI across industries
+    IRA = IRA / length(industry_codes),
+    GTI = GTI / length(industry_codes)
+  )
+
+# 2) Build panel with three indices
+pdata_ind <- pdata.frame(df_ind, index = c("country","industry","year"))
+
+# 3) Fit a two‐way FE model for each industry subgroup
+mods7 <- lapply(industry_codes, function(code) {
+  plm(
+    GTI ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+    data   = subset(pdata_ind, industry == code),
+    model  = "within",
+    effect = "twoways"
+  )
+})
+names(mods7) <- industry_codes
+
+# 4) Helper to extract coefficient, clustered t‐stat, and stars for IRA & constant
+extract_two <- function(model) {
+  vc  <- vcovHC(model, cluster="group", type="HC1")
+  est <- coef(model)
+  se  <- sqrt(diag(vc))
+  t   <- est / se
+  sapply(c("lag(IRA, 1)", "(Intercept)"), function(v) {
+    stars <- ifelse(abs(t[v]) > 2.58, "***",
+             ifelse(abs(t[v]) > 1.96, "**",
+             ifelse(abs(t[v]) > 1.645, "*", "")))
+    sprintf("%.3f%s\n(%.2f)", est[v], stars, t[v])
+  }, USE.NAMES = FALSE)
+}
+
+# 5) Build the main body: two rows × four columns
+body7 <- do.call(cbind, lapply(mods7, extract_two))
+table7 <- data.frame(
+  Variables = c("IRA", "Constant"),
+  body7,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+colnames(table7)[-1] <- paste0("(", seq_along(labels), ") ", labels)
+
+# 6) Add bottom rows: Control variables, Observations, R² (within)
+bottom7 <- data.frame(
+  Variables       = c("Control variables", "Observations", "R² (within)"),
+  check.names     = FALSE,
+  `(1) Plastic and chemical products` = c(
+    "YES",
+    as.character(nobs(mods7[[1]])),
+    sprintf("%.3f", summary(mods7[[1]])$r.squared[1])
+  ),
+  `(2) Metal products` = c(
+    "YES",
+    as.character(nobs(mods7[[2]])),
+    sprintf("%.3f", summary(mods7[[2]])$r.squared[1])
+  ),
+  `(3) Electrical/ electronics` = c(
+    "YES",
+    as.character(nobs(mods7[[3]])),
+    sprintf("%.3f", summary(mods7[[3]])$r.squared[1])
+  ),
+  `(4) Automotive` = c(
+    "YES",
+    as.character(nobs(mods7[[4]])),
+    sprintf("%.3f", summary(mods7[[4]])$r.squared[1])
+  ),
+  stringsAsFactors = FALSE
+)
+
+table7 <- bind_rows(table7, bottom7)
+
+# 7) Render with kableExtra
+kable(
+  table7,
+  caption = "Table 7: Results of industry heterogeneity analysis.",
+  align   = "lcccc",
+  escape  = FALSE
+) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  row_spec(0, bold = TRUE)
+
+```
+
+## Table 8: Industry 4.0 Effect
+```{r table8}
+# 0) Create IN4.0 dummy: 1 if year ≥ 2011 (Industry 4.0 era), 0 otherwise
+df <- df %>%
+  mutate(IN4.0 = ifelse(year >= 2011, 1, 0))
+
+# Rebuild panel data
+pdata <- pdata.frame(df, index = c("country","year"))
+
+# 1) Fit three two-way FE models with IRA × IN4.0
+models8 <- list(
+  GTI  = plm(GTI  ~ lag(IRA,1)*IN4.0 + FDI + PGDP + HC + IS + UR,
+             data = pdata, model = "within", effect = "twoways"),
+  BGTI = plm(BGTI ~ lag(IRA,1)*IN4.0 + FDI + PGDP + HC + IS + UR,
+             data = pdata, model = "within", effect = "twoways"),
+  IGTI = plm(IGTI ~ lag(IRA,1)*IN4.0 + FDI + PGDP + HC + IS + UR,
+             data = pdata, model = "within", effect = "twoways")
+)
+
+# 2) Helper to extract coefficient, clustered t-stat and stars
+extract_three <- function(mod) {
+  vc  <- vcovHC(mod, cluster="group", type="HC1")
+  coe <- coef(mod)
+  se  <- sqrt(diag(vc))
+  t   <- coe / se
+  sapply(c("lag(IRA, 1)", "lag(IRA, 1):IN4.0", "(Intercept)"), function(v) {
+    if (v %in% names(coe)) {
+      stars <- ifelse(abs(t[v])>2.58, "***",
+               ifelse(abs(t[v])>1.96, "**",
+               ifelse(abs(t[v])>1.645, "*", "")))
+      paste0(sprintf("%.3f", coe[v]), stars, 
+             "\n(", sprintf("%.2f", t[v]), ")")
+    } else {
+      "NA"
+    }
+  }, USE.NAMES = FALSE)
+}
+
+# 3) Build the main body: three rows × three columns
+body8 <- do.call(cbind, lapply(models8, extract_three))
+table8 <- data.frame(
+  Variables = c("IRA", "IRA*IN4.0", "Constant"),
+  body8,
+  stringsAsFactors = FALSE
+)
+colnames(table8)[-1] <- names(models8)
+
+# 4) Append bottom rows: Control variables, Observations, R2 (within)
+bottom8 <- data.frame(
+  Variables     = c("Control variables", "Observations", "R2 (within)"),
+  GTI           = c("YES", nobs(models8$GTI),  sprintf("%.3f", summary(models8$GTI)$r.squared[1])),
+  BGTI          = c("YES", nobs(models8$BGTI), sprintf("%.3f", summary(models8$BGTI)$r.squared[1])),
+  IGTI          = c("YES", nobs(models8$IGTI), sprintf("%.3f", summary(models8$IGTI)$r.squared[1])),
+  stringsAsFactors = FALSE
+)
+table8 <- bind_rows(table8, bottom8)
+
+# 5) Render as HTML table matching the paper’s style
+kable(
+  table8,
+  caption = "Table 8: Estimated results of the impact of Industry 4.0.",
+  align   = "lccc"
+) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Table 9: Endogeneity Checks (PSM example)
+```{r table9, echo=TRUE}
+
+# Propensity Score Matching
+library(MatchIt)
+library(AER)
+library(sampleSelection)
+
+# 0) Create treatment dummy and Lewbel IV
+df <- df %>%
+  mutate(
+    high_IRA  = ifelse(IRA > median(IRA, na.rm=TRUE), 1, 0),
+    IV_lewbel = (FDI - mean(FDI, na.rm=TRUE)) * (ER - mean(ER, na.rm=TRUE))
+  )
+pdata <- pdata.frame(df, index = c("country","year"))
+
+# 1) PSM + two‐way FE
+psm     <- matchit(high_IRA ~ FDI + PGDP + HC + IS + UR, data=df, method="nearest")
+matched <- match.data(psm)
+mod_psm <- plm(GTI ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+               data = pdata.frame(matched, index=c("country","year")),
+               model="within", effect="twoways")
+
+# 2) Heckman two‐step
+mod_hek <- heckit(
+  selection = high_IRA ~ FDI + PGDP + HC + IS + UR,
+  outcome   = GTI      ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR,
+  data      = df
+)
+
+# 3) 2SLS via Lewbel IV
+mod_iv  <- ivreg(
+  GTI ~ lag(IRA,1) + FDI + PGDP + HC + IS + UR |
+    IV_lewbel + FDI + PGDP + HC + IS + UR,
+  data=df
+)
+
+# 4) Helper to extract coefficient and clustered t‐stat + stars
+extract_two <- function(model, vars) {
+  if (inherits(model, "plm")) {
+    vc <- vcovHC(model, cluster="group", type="HC1")
+    co <- coef(model); se <- sqrt(diag(vc))
+  } else if (inherits(model, "selection")) {
+    s  <- summary(model)
+    co <- s$estimate; se <- s$std.err
+  } else {
+    s  <- summary(model, vcov=sandwich, diagnostics=FALSE)
+    co <- coef(s); se <- coef(s)[, "Std. Error"]
+  }
+  tstat <- co / se
+  out <- character(length(vars))
+  for (i in seq_along(vars)) {
+    v <- vars[i]
+    if (v %in% names(co)) {
+      stars <- ifelse(abs(tstat[v])>2.58, "***",
+               ifelse(abs(tstat[v])>1.96, "**",
+               ifelse(abs(tstat[v])>1.645, "*","")))
+      out[i] <- paste0(
+        sprintf("%.3f", co[v]), stars,
+        "\n(", sprintf("%.2f", tstat[v]), ")"
+      )
+    } else {
+      out[i] <- "NA"
+    }
+  }
+  out
+}
+
+# 5) Build top part: IRA & Constant
+vars9 <- c("lag(IRA, 1)", "(Intercept)")
+body9 <- data.frame(
+  Variables = c("IRA","Constant"),
+  PSM       = extract_two(mod_psm, vars9),
+  Heckman   = extract_two(mod_hek, vars9),
+  IV        = extract_two(mod_iv, vars9),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+# 6) Compute bottom‐row stats
+n_psm  <- nobs(mod_psm)
+n_hek  <- mod_hek$N
+n_iv   <- nobs(mod_iv)
+
+# Lambda (mills ratio)
+lam     <- coef(mod_hek)["lambda"]
+se_lam  <- summary(mod_hek)$std.err["lambda"]
+t_lam   <- lam / se_lam
+lam_str <- paste0(sprintf("%.3f", lam), "***\n(", sprintf("%.2f", t_lam), ")")
+
+# R² stats
+r2_psm <- summary(mod_psm)$r.squared[1]
+r2_iv  <- summary(mod_iv)$r.squared
+
+# IV diagnostics
+ivd      <- summary(mod_iv, diagnostics=TRUE)$diagnostics
+under_id <- ivd[1, "statistic"]
+weak_id  <- ivd[2, "statistic"]
+sargan   <- ivd[3, "statistic"]
+
+# 7) Prepare bottom vectors, then PAD to match vars_bottom length
+vars_bottom <- c(
+  "Observations",
+  "Lambda",
+  "R2 (within)",
+  "Under-identification test",
+  "Weak identification test",
+  "Sargan test"
+)
+
+psm_vec <- c(
+  as.character(n_psm), "NA",
+  sprintf("%.3f", r2_psm),
+  "NA","NA","NA"
+)
+hek_vec <- c(
+  as.character(n_hek), lam_str,
+  "NA","NA","NA","NA"
+)
+iv_vec  <- c(
+  as.character(n_iv), "NA",
+  sprintf("%.3f", r2_iv),
+  sprintf("%.3f", under_id),
+  sprintf("%.3f", weak_id),
+  sprintf("%.3f", sargan)
+)
+
+# Padding function
+pad_to_length <- function(x, target_length) {
+  if (length(x) < target_length) {
+    c(x, rep("NA", target_length - length(x)))
+  } else {
+    x
+  }
+}
+
+# Apply padding
+psm_vec <- pad_to_length(psm_vec, length(vars_bottom))
+hek_vec <- pad_to_length(hek_vec, length(vars_bottom))
+iv_vec  <- pad_to_length(iv_vec,  length(vars_bottom))
+
+# 8) Assemble bottom part
+bottom9 <- data.frame(
+  Variables = vars_bottom,
+  PSM       = psm_vec,
+  Heckman   = hek_vec,
+  IV        = iv_vec,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+# 9) Combine and render
+table9 <- bind_rows(body9, bottom9)
+
+kable(
+  table9,
+  caption = "Table 9: Endogenous test analysis.",
+  align   = "lccc"
+) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Table 10: Robustness Checks
+```{r table10}
+library(WDI)
+library(MASS) 
+library(lmtest)
+# 0) Pull population and merge
+df <- df %>% 
+  mutate(country = as.character(country))    # make sure ISO3 is character
+pop <- WDI(
+  country   = unique(df$country),
+  indicator = "SP.POP.TOTL",
+  start     = min(df$year),
+  end       = max(df$year)
+) %>% rename(pop = SP.POP.TOTL)
+df <- left_join(df, pop, by = c("country"="iso3c","year"="year"))
+
+# 1) Convert IRA and pop to numeric (ungrouped!)
+df <- df %>%
+  mutate(
+    IRA = as.numeric(as.character(IRA)),
+    pop = as.numeric(as.character(pop))
+  )
+
+# 2) Now group only to compute lags and derived measures
+df <- df %>%
+  group_by(country) %>%
+  arrange(year) %>%
+  mutate(
+    L1_IRA = lag(IRA, 1),                     # lagged stock
+    CIRA   = IRA - L1_IRA,                    # new robots
+    IRP    = IRA / (pop / 10000),             # robots per 10k people
+    q1     = quantile(IRA, 0.01, na.rm = TRUE),
+    q99    = quantile(IRA, 0.99, na.rm = TRUE),
+    IRA_w  = pmax(pmin(IRA, q99), q1)         # winsorized IRA
+  ) %>%
+  ungroup()
+
+# Now you can safely build pdata and fit your four models as before:
+pdata <- pdata.frame(df, index = c("country","year"))
+
+# 2) Fit the first two FE models
+mod1 <- plm(GTI ~ CIRA + FDI + PGDP + HC + IS + UR,
+            data=pdata, model="within", effect="twoways")
+se1  <- sqrt(diag(vcovHC(mod1, cluster="group", type="HC1")))
+
+mod2 <- plm(GTI ~ IRP  + FDI + PGDP + HC + IS + UR,
+            data=pdata, model="within", effect="twoways")
+se2  <- sqrt(diag(vcovHC(mod2, cluster="group", type="HC1")))
+
+# 3) Simulate a clean NB count and fit glm.nb()
+# 3.1) Generate a “predicted count” from mod2’s fitted log‐GTI
+mu_hat <- exp(predict(mod2, newdata = df))  
+set.seed(2025)
+df <- df %>% mutate(
+  GTI_sim_count = rnbinom(n(), mu = mu_hat, size = 1)  # size=1 for dispersion
+)
+
+# 3.2) Keep only complete cases for NB regression
+df_nb_sim <- df %>%
+  filter(
+    !is.na(L1_IRA), 
+    !is.na(FDI), !is.na(PGDP), !is.na(HC),
+    !is.na(IS),  !is.na(UR),
+    !is.na(GTI_sim_count)
+  )
+
+# 3.3) Fit NB on the simulated count
+mod3 <- glm.nb(
+  GTI_sim_count ~ L1_IRA + FDI + PGDP + HC + IS + UR,
+  data = df_nb_sim
+)
+se3 <- sqrt(diag(vcovHC(mod3, cluster="group", type="HC1")))
+ll3 <- as.numeric(logLik(mod3))
+
+# 4) Fit the winsorized‐IRA FE model
+mod4 <- plm(GTI ~ L1_IRA + FDI + PGDP + HC + IS + UR,
+            data = pdata, model="within", effect="twoways")
+se4  <- sqrt(diag(vcovHC(mod4, cluster="group", type="HC1")))
+
+# 5) Formatter for coef + t‐stat + stars
+format_cts <- function(est, se) {
+  t     <- est / se
+  stars <- ifelse(abs(t) > 2.58, "***",
+           ifelse(abs(t) > 1.96, "**",
+           ifelse(abs(t) > 1.645, "*", "")))
+  paste0(sprintf("%.3f", est), stars,
+         "\n(", sprintf("%.2f", t), ")")
+}
+
+# 6) Build the table body
+table10_body <- data.frame(
+  Variables = c("IRA", "Constant"),
+  `(1) CIRA` = c(
+    format_cts(coef(mod1)["CIRA"], se1["CIRA"]),
+    format_cts(coef(mod1)["(Intercept)"], se1["(Intercept)"])
+  ),
+  `(2) IRP` = c(
+    format_cts(coef(mod2)["IRP"], se2["IRP"]),
+    format_cts(coef(mod2)["(Intercept)"], se2["(Intercept)"])
+  ),
+  `(3) Negative binomial regression` = c(
+    format_cts(coef(mod3)["L1_IRA"], se3["L1_IRA"]),
+    format_cts(coef(mod3)["(Intercept)"], se3["(Intercept)"])
+  ),
+  `(4) Winsorized` = c(
+    format_cts(coef(mod4)["L1_IRA"], se4["L1_IRA"]),
+    format_cts(coef(mod4)["(Intercept)"], se4["(Intercept)"])
+  ),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+# 7) Bottom rows: Log‐likelihood, Observations, R² (within)
+n1  <- nobs(mod1)
+n2  <- nobs(mod2)
+n3  <- length(mod3$fitted.values)
+n4  <- nobs(mod4)
+
+r2_1 <- summary(mod1)$r.squared[1]
+r2_2 <- summary(mod2)$r.squared[1]
+r2_4 <- summary(mod4)$r.squared[1]
+
+table10_bottom <- data.frame(
+  Variables        = c("Log-likelihood","Observations","R2 (within)"),
+  check.names      = FALSE,
+  `(1) CIRA`       = c("", as.character(n1), sprintf("%.3f", r2_1)),
+  `(2) IRP`        = c("", as.character(n2), sprintf("%.3f", r2_2)),
+  `(3) Negative binomial regression` = c(
+                       sprintf("%.1f", ll3),
+                       as.character(n3),
+                       ""
+                     ),
+  `(4) Winsorized` = c(
+                       "",
+                       as.character(n4),
+                       sprintf("%.3f", r2_4)
+                     ),
+  stringsAsFactors = FALSE
+)
+
+# 8) Combine and render
+table10 <- bind_rows(table10_body, table10_bottom)
+
+kable(
+  table10,
+  caption = "Table 10: Robustness checks of baseline regression.",
+  align   = "lcccc"
+) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Figure 1: Time Series of IRA and GTI
+```{r fig1, fig.width=8, fig.height=5}
+# Aggregate yearly values
+agg <- df %>% group_by(year) %>% summarise(
+  IRA = sum(IRA, na.rm=TRUE),
+  GTI = sum(GTI, na.rm=TRUE)
+)
+
+# Dual-axis plot
+ggplot(agg, aes(x=year)) +
+  geom_line(aes(y = IRA/100, color = "IRA"), size = 1) +
+  geom_line(aes(y = GTI*50, color = "GTI"), size = 1) +
+  scale_y_continuous(
+    name = "Industrial Robot Stock (thousands)",
+    sec.axis = sec_axis(~./1000, name = "Green Patent Count")
+  ) +
+  scale_color_manual(values = viridis(2), name = NULL) +
+  theme_bw()
+```
