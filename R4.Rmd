@@ -1,0 +1,295 @@
+---
+title: "Reproducibility of R4 Tables"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+# Core tidyverse and dependencies
+library(readr)
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(MASS)
+library(broom)
+library(corrr)
+library(glmmTMB)
+library(broom.mixed)
+
+```
+
+# 1. Data sources
+
+- **COVID-19 dataset** (`owid_covid_2021-10-08.csv`): snapshot on 2021-10-08  
+  Source: case Data – total cases, deaths, and tests per country.  
+- **Sociodemographic dataset** (`R4_data.csv`): The WDI archive does *not* provide the variables: extreme_poverty_pct` and `obesity_prevalence`.See data.ipynb for details on how these were handled. 
+- **Human Development Index (HDI)**: 2019 HDI from UNDP Human Development Report 2019 (Excel "Table 1: HDI and its components").
+
+# 2. Load and merge data
+
+```{r load-data}
+# Load COVID-19 data
+covid <- read_csv(
+  "owid_covid_2021-10-08.csv",
+  col_types = cols(date = col_date(format = "%Y-%m-%d"))
+) %>%
+  filter(date == as.Date("2021-10-08")) %>%
+  dplyr::select(
+    iso_code,
+    location,
+    total_cases,
+    total_deaths,
+    total_tests_per_thousand,
+    tests_per_case
+  )
+
+# Load WDI sociodemographic data
+socio <- read_csv(
+  "R4_data.csv",
+  show_col_types = FALSE
+) %>%
+  rename(
+    iso_code = `Country Code`
+  )
+
+# Load HDI data from UNDP Excel (Country names only)
+hdr <- readxl::read_excel(
+  "HDR25_Statistical_Annex_HDI_Table.xlsx",
+  sheet = 1,
+  col_types = c("text", "numeric")
+) %>%
+  dplyr::rename(
+    country = Country
+  ) %>%
+  dplyr::select(country, hdi)
+
+# Merge datasets: join HDI by matching hdr$country to covid$location
+
+df <- covid %>%
+  left_join(socio, by = "iso_code") %>%
+  left_join(hdr,   by = c("location" = "country"))
+
+```
+
+# 3. Compute derived variables
+
+```{r derive-vars}
+df <- df %>%
+  mutate(
+    incidence_per_100k = total_cases  / population * 1e5,
+    mortality_per_100k = total_deaths / population * 1e5,
+    fatality_rate_pct  = total_deaths / total_cases  * 100
+  )
+```
+
+# 4. Table 1 – Descriptive statistics (with IQR)
+
+```{r table1}
+vars_table1 <- c(
+  "incidence_per_100k", "mortality_per_100k", "fatality_rate_pct",
+  "diabetes_prevalence", "hdi", "gdp_per_capita",
+  "health_expenditure_pct_gdp", "physicians_per_1000", "hospital_beds_per_1000",
+  "population_65_plus_pct", "total_tests_per_thousand", "tests_per_case",
+  "population", "life_expectancy"
+)
+
+table1 <- df %>%
+  dplyr::select(all_of(vars_table1)) %>%
+  pivot_longer(
+    cols      = everything(),
+    names_to  = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(variable) %>%
+  summarise(
+    N      = sum(!is.na(value)),
+    Min    = min(value, na.rm = TRUE),
+    P25    = quantile(value, .25, na.rm = TRUE),
+    Median = median(value, na.rm = TRUE),
+    P75    = quantile(value, .75, na.rm = TRUE),
+    Max    = max(value, na.rm = TRUE),
+    IQR    = P75 - P25,
+    .groups = 'drop'
+  ) %>%
+  arrange(match(variable, vars_table1))
+
+table1
+```
+
+# 5. Table 2 – Spearman correlation matrix
+
+```{r table2}
+table2 <- df %>%
+  dplyr::select(all_of(vars_table1)) %>%
+  correlate(method = "spearman")
+
+table2
+```
+
+# 6. Table 3 – Negative Binomial regression for incidence
+
+```{r table3}
+
+# Prepare modeling dataframe, classifying HDI here
+df_model <- df %>%
+  # classify continuous hdi into four categories on the fly
+  dplyr::mutate(
+    hdi_cat = cut(
+      hdi,
+      breaks = c(-Inf, 0.54, 0.69, 0.79, Inf),
+      labels = c("Low", "Medium", "High", "Very high"),
+      right  = TRUE
+    )
+  ) %>%
+  # drop any rows where hdi_cat is NA
+  dplyr::filter(!is.na(hdi_cat)) %>%
+  # select outcome, offset, HDI category and predictors
+  dplyr::select(
+    total_cases,
+    population,
+    hdi_cat,
+    gdp_per_capita,
+    hospital_beds_per_1000,
+    population_65_plus_pct,
+    total_tests_per_thousand,
+    tests_per_case,
+    life_expectancy,
+    diabetes_prevalence,
+    total_deaths
+  ) %>%
+  # impute missing population with its mean
+  dplyr::mutate(
+    population = ifelse(
+      is.na(population),
+      mean(population, na.rm = TRUE),
+      population
+    )
+  ) %>%
+  # remove any column that is entirely NA
+  dplyr::select(dplyr::where(~ !all(is.na(.)))) %>%
+  # impute remaining missing values by each column's mean
+  dplyr::mutate(
+    dplyr::across(
+      dplyr::where(~ any(is.na(.))),
+      ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)
+    )
+  ) %>%
+  # standardize all numeric predictors except outcome and offset
+  dplyr::mutate(
+    dplyr::across(
+      .cols = dplyr::where(is.numeric) & !all_of(c("total_cases", "population", "total_deaths")),
+      .fns  = ~ as.numeric(scale(.))
+    )
+  )
+
+model_inc <- glmmTMB(
+  total_cases ~
+    hdi_cat +
+    gdp_per_capita +
+    hospital_beds_per_1000 +
+    population_65_plus_pct +
+    total_tests_per_thousand +
+    tests_per_case +
+    life_expectancy +
+    diabetes_prevalence +
+    offset(log(population)),
+  family = nbinom2(),
+  data   = df_model
+)
+
+# now summary will have valid SE / z / p
+coef_mat <- summary(model_inc)$coefficients$cond
+table3_inc <- as.data.frame(coef_mat) %>%
+  tibble::rownames_to_column("Predictor") %>%
+  dplyr::filter(Predictor != "(Intercept)") %>%
+  dplyr::rename(
+    Estimate = Estimate,
+    SE       = `Std. Error`,
+    p_value  = `Pr(>|z|)`
+  ) %>%
+  dplyr::mutate(
+    IRR      = exp(Estimate),
+    CI_lower = exp(Estimate - 1.96 * SE),
+    CI_upper = exp(Estimate + 1.96 * SE)
+  ) %>%
+  dplyr::select(Predictor, IRR, CI_lower, CI_upper, p_value)
+
+table3_inc
+
+```
+# 7.  Table 4 and 5: NB regression for Mortality (MRR) 
+
+```{r table 4 and 5}
+
+model_mort <- glmmTMB(
+  total_deaths ~
+    hdi_cat +
+    gdp_per_capita +
+    hospital_beds_per_1000 +
+    population_65_plus_pct +
+    total_tests_per_thousand +
+    tests_per_case +
+    life_expectancy +
+    diabetes_prevalence +
+    offset(log(population)),
+  family = nbinom2(),
+  data   = df_model
+)
+
+# Extract MRR, 95% CI, p-value
+table4_mrr <- broom.mixed::tidy(
+  model_mort,
+  effects      = "fixed",
+  exponentiate = TRUE,
+  conf.int     = TRUE
+) %>%
+  filter(term != "(Intercept)") %>%
+  rename(
+    Predictor = term,
+    MRR       = estimate,
+    CI_lower  = conf.low,
+    CI_upper  = conf.high,
+    p_value   = p.value
+  )
+
+# Display Table 4
+table4_mrr
+
+# --- Table 5: Logistic regression for Fatality (FRR) ---
+# Model fatality as binomial: deaths vs survivors
+model_fat <- glm(
+  cbind(total_deaths, total_cases - total_deaths) ~
+    hdi_cat +
+    gdp_per_capita +
+    hospital_beds_per_1000 +
+    population_65_plus_pct +
+    total_tests_per_thousand +
+    tests_per_case +
+    life_expectancy +
+    diabetes_prevalence,
+  family = binomial(link = "logit"),
+  data   = df_model
+)
+
+# Extract OR, 95% CI, p-value
+table5_frr <- broom::tidy(
+  model_fat,
+  exponentiate = TRUE,
+  conf.int     = TRUE
+) %>%
+  filter(term != "(Intercept)") %>%
+  rename(
+    Predictor = term,
+    OR        = estimate,
+    CI_lower  = conf.low,
+    CI_upper  = conf.high,
+    p_value   = p.value
+  )
+
+# Display Table 5
+table5_frr
+```
