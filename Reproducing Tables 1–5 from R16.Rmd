@@ -1,0 +1,218 @@
+---
+
+title: "Reproducing Tables 1–5 from R16"
+output:
+html\_document:
+toc: true
+number\_sections: false
+-----------------------
+
+```{r setup, include=FALSE}
+library(data.table)
+library(dplyr)
+library(minerva)   # for MIC
+library(tidyr)     # for pivoting
+library(knitr)     # for kable
+
+# Read your WDI data
+df <- fread("wdidataset_selected.csv", data.table = FALSE)
+
+# Rename last column as 'target'
+target_col <- tail(names(df),1)
+df <- df %>% rename(target = !!target_col)
+
+# Keep only numeric columns & drop any rows with NA
+df <- df %>% select_if(is.numeric) %>% na.omit()
+
+# Extract feature names (all except the target)
+vars <- setdiff(names(df), "target")
+```
+
+## Table 1 – Relevant Variables and Their MIC
+
+```{r table1}
+# Compute MIC for each feature vs target
+mic_vals <- sapply(vars, function(v){
+  mine(df[[v]], df$target)$MIC
+})
+
+# Build Table 1: indicators with MIC ≥ 0.3, sorted descending
+table1 <- data.frame(
+  Indicator = vars,
+  MIC       = mic_vals
+) %>%
+  filter(MIC >= 0.3) %>%
+  arrange(desc(MIC))
+
+# Render
+kable(
+  table1,
+  digits  = 4,
+  caption = "Some most relevant variables and their MIC."
+)
+```
+
+## Table 2 – Top 20 Interaction Relationships by RSC (b=2)
+
+```{r table2}
+# InfoGain per R16 Algorithm 2
+InfoGain <- function(x1, x2, y, bins = 2) {
+  # equal-frequency bins
+  cuts1 <- unique(quantile(x1, probs = seq(0,1,length.out=bins+1), na.rm=TRUE))
+  cuts2 <- unique(quantile(x2, probs = seq(0,1,length.out=bins+1), na.rm=TRUE))
+  x1b   <- cut(x1, breaks=cuts1, include.lowest=TRUE)
+  x2b   <- cut(x2, breaks=cuts2, include.lowest=TRUE)
+
+  dt   <- data.table(x1b, x2b, y)
+  dt12 <- dt[, .(mean=mean(y), sd=sd(y), n=.N), by=.(x1b,x2b)]
+  dt1  <- dt[, .(mean=mean(y), sd=sd(y), n=.N), by=x1b]
+  dt2  <- dt[, .(mean=mean(y), sd=sd(y), n=.N), by=x2b]
+
+  rowScore <- function(sub, marg){
+    sub[n>=10, sum((n/marg$n)*abs(mean-marg$mean)/sqrt(sd*marg$sd))]
+  }
+
+  w1  <- dt1[, .(w=n/sum(n), g=rowScore(dt12[x1b==x1b], .SD)),
+             by=x1b, .SDcols=c("mean","sd","n")]
+  G21 <- sum(w1$w * w1$g) / sqrt(nrow(w1))
+
+  w2  <- dt2[, .(w=n/sum(n), g=rowScore(dt12[x2b==x2b], .SD)),
+             by=x2b, .SDcols=c("mean","sd","n")]
+  G12 <- sum(w2$w * w2$g) / sqrt(nrow(w2))
+
+  c(G21=G21, G12=G12)
+}
+
+# Compute RSC for all pairs
+pairs   <- combn(vars,2, simplify=FALSE)
+results <- lapply(pairs, function(p){
+  x1 <- df[[p[1]]]; x2 <- df[[p[2]]]; y <- df$target
+  mic1 <- mine(x1,y)$MIC; mic2 <- mine(x2,y)$MIC
+  ig   <- InfoGain(x1,x2,y,bins=2)
+  data.frame(
+    X1   = p[1], X2   = p[2],
+    MIC1 = mic1, MIC2 = mic2,
+    IG1  = ig["G21"], IG2 = ig["G12"],
+    RSC  = max(ig["G21"]/mic1, ig["G12"]/mic2)
+  )
+})
+
+table2 <- bind_rows(results) %>%
+  arrange(desc(RSC)) %>%
+  slice_head(n=20)
+
+kable(
+  table2,
+  digits  = 4,
+  caption = "Top 20 interaction relationships by RSC with b = 2."
+)
+```
+
+## Table 3 – Example of Augment Synergy Selected by RSC
+
+```{r table3}
+# Step 1: Specify exact column names for augment synergy example
+fert_col <- "Fertilizer consumption (kilograms per hectare of arable land)(2018)"
+law_col  <- "Strength of legal rights index (0=weak to 12=strong)(2018)"
+
+# Step 2: Extract raw data and target column
+df3_raw <- df[, c(fert_col, law_col, "target")]
+
+# Step 3: Keep only complete cases
+df3_clean <- na.omit(df3_raw)
+
+# Step 4: Bin fertilizer into Low/High, legal index into Weak/Strong
+b1 <- ifelse(df3_clean[[fert_col]] <= median(df3_clean[[fert_col]]), "Low",   "High")
+b2 <- ifelse(df3_clean[[law_col]]  <= median(df3_clean[[law_col]]),  "Weak",  "Strong")
+
+# Step 5: Compute counts and mean GDP for each bin combination
+df3  <- data.frame(b1, b2, df3_clean$target)
+colnames(df3) <- c("b1","b2","y")
+cnt3 <- df3 %>% count(b1, b2) %>% spread(b2, n, fill = 0)
+gdp3 <- df3 %>% 
+  group_by(b1, b2) %>% 
+  summarize(GDP = round(mean(y), 2), .groups = 'drop') %>% 
+  spread(b2, GDP, fill = NA)
+
+# Combine into final table
+table3 <- cbind(cnt3[,-1], gdp3[,-1])
+rownames(table3) <- cnt3$b1
+colnames(table3) <- c("Count_Weak","Count_Strong","GDP_Weak","GDP_Strong")
+
+# Step 6: Render Table 3
+kable(
+  table3,
+  caption = "An example of augment synergy selected by RSC.",
+  row.names = TRUE
+)
+```
+
+## Table 4 – Example of Cross Synergy Selected by RSC
+
+```{r table4}
+# Step 1: Specify exact column names for cross synergy
+lab_col <- "Labor force participation rate, male (% of male population ages 15-64) (modeled ILO estimate)(2018)"
+ref_col <- "Refugee population by country or territory of asylum(2018)"
+
+# Step 2: Extract the raw data vectors and target
+df4_raw <- df[, c(lab_col, ref_col, "target")]
+
+# Step 3: Retain only complete cases
+df4_clean <- na.omit(df4_raw)
+
+# Step 4: Bin each variable around its median
+b1 <- ifelse(df4_clean[[lab_col]] <= median(df4_clean[[lab_col]]), "Low", "High")
+b2 <- ifelse(df4_clean[[ref_col]]   <= median(df4_clean[[ref_col]]),   "Low", "High")
+
+y  <- df4_clean[["target"]]
+
+# Step 5: Compute counts and mean GDP for each bin combination
+df4 <- data.frame(b1, b2, y)
+cnt4 <- df4 %>% count(b1, b2) %>% spread(b2, n, fill = 0)
+gdp4 <- df4 %>% group_by(b1, b2) %>% summarize(GDP = round(mean(y), 2), .groups = 'drop') %>% spread(b2, GDP, fill = NA)
+
+table4 <- cbind(cnt4[,-1], gdp4[,-1])
+rownames(table4) <- cnt4$b1
+colnames(table4) <- c("Count_Low", "Count_High", "GDP_Low", "GDP_High")
+
+# Step 6: Render Table 4
+kable(table4, caption = "An example of cross synergy selected by RSC.", row.names = TRUE)
+```
+
+## Table 5 – Example of Simpson Paradox Selected by RSC
+
+```{r table5}
+# detect columns
+ins_col <- grep("insolvency",   names(df), ignore.case=TRUE, value=TRUE)[1]
+law_col <- grep("legal rights", names(df), ignore.case=TRUE, value=TRUE)[1]
+
+v3_full <- df[[ins_col]]
+v4_full <- df[[law_col]]
+y_full  <- df$target
+
+sel <- complete.cases(v3_full, v4_full, y_full)
+v3 <- v3_full[sel]; v4 <- v4_full[sel]; y <- y_full[sel]
+
+# bin
+b3 <- ifelse(v3 <= median(v3),"Short","Long")
+b4 <- ifelse(v4 <= median(v4),"Weak","Strong")
+
+df5  <- data.frame(b3,b4,y)
+cnt5 <- df5 %>% count(b3,b4) %>% spread(b4,n,fill=0)
+gdp5 <- df5 %>% group_by(b3,b4) %>% summarize(GDP=round(mean(y),2)) %>% spread(b4,GDP,fill=NA)
+
+table5 <- cbind(cnt5[,-1], gdp5[,-1])
+rownames(table5) <- cnt5$b3
+colnames(table5) <- c("Count_Weak","Count_Strong","GDP_Weak","GDP_Strong")
+
+kable(
+  table5,
+  caption   = "An example of Simpson paradox selected by RSC.",
+  row.names = TRUE
+)
+```
+
+```{r sessionInfo, echo=FALSE}
+# Print session information for reproducibility
+sessionInfo()
+```
