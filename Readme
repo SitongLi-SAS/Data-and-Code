@@ -1,0 +1,17 @@
+I have uploaded the original Python scripts and the WDI dataset alongside this R Markdown for reference.
+
+Why reproduced in R instead of using the original Python code:
+
+Dependency stability: The original Python implementation relies on the C-extension minepy, which can be difficult to compile on some systems (especially without preinstalled GSL and Python headers). In contrast, R’s minerva::mine() offers a turnkey MIC calculation with no extra compilation required.
+
+Ecosystem and productivity: R’s data-manipulation packages (data.table, dplyr, tidyr) combined with knitr and R Markdown allow us to integrate data processing, algorithm implementation, and table rendering into one self-documenting workflow. This makes it easy to generate publication-quality tables and figures in a single reproducible document.
+
+Reproducible reporting: By using R Markdown, we produce a single HTML/PDF report that contains both the code and the output (Tables 1–5), ensuring transparency and simplifying peer review or collaborative development.
+
+Why the “Country number” counts differ from the original paper:
+
+Data filtering: In our R pipeline we applied select_if(is.numeric) %>% na.omit() on the entire dataset before any binning. This removes all rows with any missing values, which can reduce the number of countries in each bin compared to the authors’ original filtering rules.
+
+Outlier and missing-value handling: The authors may have applied additional filters or manual adjustments (e.g. excluding extreme outliers or imputing missing entries) when preparing their WDI subset, resulting in slightly different cell counts (e.g. 56 vs 48).
+
+Core conclusions remain unchanged: Although the raw “country number” in each bin shifts modestly, the computed RSC values and overall synergy patterns are effectively identical. These small differences do not alter the paper’s main findings or their interpretation.
