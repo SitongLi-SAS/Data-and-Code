@@ -1,0 +1,5 @@
+begYear=1990
+endYear=2015
+countries=US,CN,IN
+indicators=pop=SP.POP.TOTL,gdp=NY.GDP.PCAP.CD
+output=gdpr.csv

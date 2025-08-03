@@ -1,0 +1,157 @@
+"country","iso2c","iso3c","year","SP.POP.TOTL","variable","NY.GDP.PCAP.CD"
+"China","CN","CHN",2015,1379860000,"pop",NA
+"China","CN","CHN",2014,1371860000,"pop",NA
+"China","CN","CHN",2013,1363240000,"pop",NA
+"China","CN","CHN",2012,1354190000,"pop",NA
+"China","CN","CHN",2011,1345035000,"pop",NA
+"China","CN","CHN",2010,1337705000,"pop",NA
+"China","CN","CHN",2009,1331260000,"pop",NA
+"China","CN","CHN",2008,1324655000,"pop",NA
+"China","CN","CHN",2007,1317885000,"pop",NA
+"China","CN","CHN",2006,1311020000,"pop",NA
+"China","CN","CHN",2005,1303720000,"pop",NA
+"China","CN","CHN",2004,1296075000,"pop",NA
+"China","CN","CHN",2003,1288400000,"pop",NA
+"China","CN","CHN",2002,1280400000,"pop",NA
+"China","CN","CHN",2001,1271850000,"pop",NA
+"China","CN","CHN",2000,1262645000,"pop",NA
+"China","CN","CHN",1999,1252735000,"pop",NA
+"China","CN","CHN",1998,1241935000,"pop",NA
+"China","CN","CHN",1997,1230075000,"pop",NA
+"China","CN","CHN",1996,1217550000,"pop",NA
+"China","CN","CHN",1995,1204855000,"pop",NA
+"China","CN","CHN",1994,1191835000,"pop",NA
+"China","CN","CHN",1993,1178440000,"pop",NA
+"China","CN","CHN",1992,1164970000,"pop",NA
+"China","CN","CHN",1991,1150780000,"pop",NA
+"China","CN","CHN",1990,1135185000,"pop",NA
+"India","IN","IND",2015,1328024498,"pop",NA
+"India","IN","IND",2014,1312277191,"pop",NA
+"India","IN","IND",2013,1295829511,"pop",NA
+"India","IN","IND",2012,1278674502,"pop",NA
+"India","IN","IND",2011,1261224954,"pop",NA
+"India","IN","IND",2010,1243481564,"pop",NA
+"India","IN","IND",2009,1225524753,"pop",NA
+"India","IN","IND",2008,1207930964,"pop",NA
+"India","IN","IND",2007,1190676021,"pop",NA
+"India","IN","IND",2006,1172878890,"pop",NA
+"India","IN","IND",2005,1154676322,"pop",NA
+"India","IN","IND",2004,1135991513,"pop",NA
+"India","IN","IND",2003,1116803006,"pop",NA
+"India","IN","IND",2002,1097600380,"pop",NA
+"India","IN","IND",2001,1077898575,"pop",NA
+"India","IN","IND",2000,1057922733,"pop",NA
+"India","IN","IND",1999,1038225823,"pop",NA
+"India","IN","IND",1998,1018665080,"pop",NA
+"India","IN","IND",1997,999133762,"pop",NA
+"India","IN","IND",1996,979678458,"pop",NA
+"India","IN","IND",1995,960301044,"pop",NA
+"India","IN","IND",1994,941163767,"pop",NA
+"India","IN","IND",1993,922118387,"pop",NA
+"India","IN","IND",1992,902957070,"pop",NA
+"India","IN","IND",1991,883927600,"pop",NA
+"India","IN","IND",1990,864972221,"pop",NA
+"United States","US","USA",2015,321815121,"pop",NA
+"United States","US","USA",2014,319257560,"pop",NA
+"United States","US","USA",2013,316726282,"pop",NA
+"United States","US","USA",2012,314339099,"pop",NA
+"United States","US","USA",2011,311839461,"pop",NA
+"United States","US","USA",2010,309378227,"pop",NA
+"United States","US","USA",2009,306771529,"pop",NA
+"United States","US","USA",2008,304093966,"pop",NA
+"United States","US","USA",2007,301231207,"pop",NA
+"United States","US","USA",2006,298379912,"pop",NA
+"United States","US","USA",2005,295516599,"pop",NA
+"United States","US","USA",2004,292805298,"pop",NA
+"United States","US","USA",2003,290107933,"pop",NA
+"United States","US","USA",2002,287625193,"pop",NA
+"United States","US","USA",2001,284968955,"pop",NA
+"United States","US","USA",2000,282162411,"pop",NA
+"United States","US","USA",1999,279040000,"pop",NA
+"United States","US","USA",1998,275854000,"pop",NA
+"United States","US","USA",1997,272657000,"pop",NA
+"United States","US","USA",1996,269394000,"pop",NA
+"United States","US","USA",1995,266278000,"pop",NA
+"United States","US","USA",1994,263126000,"pop",NA
+"United States","US","USA",1993,259919000,"pop",NA
+"United States","US","USA",1992,256514000,"pop",NA
+"United States","US","USA",1991,252981000,"pop",NA
+"United States","US","USA",1990,249623000,"pop",NA
+"China","CN","CHN",2015,NA,"gdp",8175.33285077393
+"China","CN","CHN",2014,NA,"gdp",7781.06597484974
+"China","CN","CHN",2013,NA,"gdp",7147.03518622344
+"China","CN","CHN",2012,NA,"gdp",6405.0574241349
+"China","CN","CHN",2011,NA,"gdp",5703.76027973346
+"China","CN","CHN",2010,NA,"gdp",4629.24551710077
+"China","CN","CHN",2009,NA,"gdp",3898.24459158811
+"China","CN","CHN",2008,NA,"gdp",3523.44302065213
+"China","CN","CHN",2007,NA,"gdp",2734.72709877693
+"China","CN","CHN",2006,NA,"gdp",2129.25696999613
+"China","CN","CHN",2005,NA,"gdp",1777.64496828464
+"China","CN","CHN",2004,NA,"gdp",1530.92726215723
+"China","CN","CHN",2003,NA,"gdp",1306.97245408557
+"China","CN","CHN",2002,NA,"gdp",1163.55957673426
+"China","CN","CHN",2001,NA,"gdp",1065.40597574519
+"China","CN","CHN",2000,NA,"gdp",969.199513696287
+"China","CN","CHN",1999,NA,"gdp",881.146614068925
+"China","CN","CHN",1998,NA,"gdp",835.095348597432
+"China","CN","CHN",1997,NA,"gdp",786.743548510999
+"China","CN","CHN",1996,NA,"gdp",713.337387811657
+"China","CN","CHN",1995,NA,"gdp",612.680277898627
+"China","CN","CHN",1994,NA,"gdp",475.677874448369
+"China","CN","CHN",1993,NA,"gdp",378.939353053314
+"China","CN","CHN",1992,NA,"gdp",367.822651903542
+"China","CN","CHN",1991,NA,"gdp",334.130288119078
+"China","CN","CHN",1990,NA,"gdp",318.50335359039
+"India","IN","IND",2015,NA,"gdp",1583.99815907985
+"India","IN","IND",2014,NA,"gdp",1553.88396075118
+"India","IN","IND",2013,NA,"gdp",1432.84397512195
+"India","IN","IND",2012,NA,"gdp",1429.32199520032
+"India","IN","IND",2011,NA,"gdp",1445.46127486037
+"India","IN","IND",2010,NA,"gdp",1347.51939071367
+"India","IN","IND",2009,NA,"gdp",1094.94974598436
+"India","IN","IND",2008,NA,"gdp",992.519584923828
+"India","IN","IND",2007,NA,"gdp",1021.88707706826
+"India","IN","IND",2006,NA,"gdp",801.668353659022
+"India","IN","IND",2005,NA,"gdp",710.488080408949
+"India","IN","IND",2004,NA,"gdp",624.258826510066
+"India","IN","IND",2003,NA,"gdp",544.143133545002
+"India","IN","IND",2002,NA,"gdp",469.149928973927
+"India","IN","IND",2001,NA,"gdp",450.357900514128
+"India","IN","IND",2000,NA,"gdp",442.750218937263
+"India","IN","IND",1999,NA,"gdp",441.927991436397
+"India","IN","IND",1998,NA,"gdp",413.630864056851
+"India","IN","IND",1997,NA,"gdp",416.228116203753
+"India","IN","IND",1996,NA,"gdp",401.046754673579
+"India","IN","IND",1995,NA,"gdp",375.17600537305
+"India","IN","IND",1994,NA,"gdp",347.73421473994
+"India","IN","IND",1993,NA,"gdp",302.884806246174
+"India","IN","IND",1992,NA,"gdp",319.182472626315
+"India","IN","IND",1991,NA,"gdp",305.574055928592
+"India","IN","IND",1990,NA,"gdp",371.085936203765
+"United States","US","USA",2015,NA,"gdp",56849.4697923159
+"United States","US","USA",2014,NA,"gdp",55153.3940182967
+"United States","US","USA",2013,NA,"gdp",53297.3862901595
+"United States","US","USA",2012,NA,"gdp",51708.3940614082
+"United States","US","USA",2011,NA,"gdp",50024.8812320773
+"United States","US","USA",2010,NA,"gdp",48642.6312088213
+"United States","US","USA",2009,NA,"gdp",47194.9500893872
+"United States","US","USA",2008,NA,"gdp",48570.0594269601
+"United States","US","USA",2007,NA,"gdp",48050.227412195
+"United States","US","USA",2006,NA,"gdp",46301.9876485519
+"United States","US","USA",2005,NA,"gdp",44123.3996470026
+"United States","US","USA",2004,NA,"gdp",41724.6411982614
+"United States","US","USA",2003,NA,"gdp",39490.3023903176
+"United States","US","USA",2002,NA,"gdp",37997.7424300242
+"United States","US","USA",2001,NA,"gdp",37133.6203973517
+"United States","US","USA",2000,NA,"gdp",36329.9702595751
+"United States","US","USA",1999,NA,"gdp",34515.3813073394
+"United States","US","USA",1998,NA,"gdp",32853.6725949234
+"United States","US","USA",1997,NA,"gdp",31459.1299691554
+"United States","US","USA",1996,NA,"gdp",29967.7127181749
+"United States","US","USA",1995,NA,"gdp",28690.8757013347
+"United States","US","USA",1994,NA,"gdp",27694.853416234
+"United States","US","USA",1993,NA,"gdp",26387.2937338171
+"United States","US","USA",1992,NA,"gdp",25418.9907763319
+"United States","US","USA",1991,NA,"gdp",24342.2589048189
+"United States","US","USA",1990,NA,"gdp",23888.6000088133
