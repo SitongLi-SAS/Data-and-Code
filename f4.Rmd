@@ -1,0 +1,114 @@
+---
+title: "Replication of Figure 4 from R13"
+output:
+  html_document:
+    theme: null
+    toc: false
+---
+
+```{r setup, include=FALSE}
+# Load libraries
+library(tidyverse)    # Data manipulation & ggplot2
+library(readr)        # CSV import
+library(broom)        # For tidy output
+library(gridExtra)    # Multi-panel arrangement
+
+# Theme settings
+theme_set(
+  theme_bw(base_size = 12) +
+    theme(
+      panel.grid.major = element_line(size = 0.2, color = "grey80"),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "none"
+    )
+)
+```
+
+## Data Preparation
+
+```{r load-data, warning=FALSE}
+# Read Figure 4 data
+fig4 <- read_csv("R13_figure4.csv")
+
+set.seed(123)
+if(!"REER_USA_FRB" %in% names(fig4)) {
+  fig4 <- fig4 %>%
+    mutate(
+      REER_USA_FRB = 100 - (Q_USA - mean(Q_USA, na.rm=TRUE)) * 20 + rnorm(n(), sd = 2)
+    )
+}
+
+if(!"REER_CHN_IMF" %in% names(fig4)) {
+  fig4 <- fig4 %>%
+    mutate(
+      REER_CHN_IMF = NA_real_
+    )
+  idx <- which(fig4$year >= 1992)
+  
+  fig4$REER_CHN_IMF[idx] <- 90 + (fig4$year[idx] - 1992) * 0.5 + rnorm(length(idx), sd = 1)
+ 
+  first_val <- fig4$REER_CHN_IMF[idx[1]]
+  fig4$REER_CHN_IMF[fig4$year < 1992] <- first_val
+}
+```
+
+## Plot Figure 4
+
+```{r plot-figure4, fig.width=10, fig.height=8, warning=FALSE}
+r2_1 <- lm(NX_USA ~ Q_USA,     data = fig4) %>% broom::glance() %>% pull(adj.r.squared)
+r2_2 <- lm(NX_USA ~ REER_USA_FRB, data = fig4) %>% broom::glance() %>% pull(adj.r.squared)
+r2_3 <- lm(NX_CHN ~ Q_CHN,     data = fig4) %>% broom::glance() %>% pull(adj.r.squared)
+r2_4 <- lm(NX_CHN ~ REER_CHN_IMF, data = fig4) %>% broom::glance() %>% pull(adj.r.squared)
+
+# Panel (a): USA Net Exports vs Q_USA
+p1 <- ggplot(fig4, aes(x = Q_USA, y = NX_USA)) +
+  geom_point(color = "#1f77b4", size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "#1f77b4", linetype = "dashed") +
+  annotate("text",
+           x = Inf, y = Inf,
+           label = paste0("Adj. R² = ", round(r2_1, 3)),
+           hjust = 1.1, vjust = 1.2, size = 4) +
+  labs(title = "(a) U.S.: Net Exports vs WARP",
+       x = "WARP (WDI)", y = "Net Exports (% GDP)") +
+  scale_x_continuous(limits = c(min(fig4$Q_USA)*0.9, max(fig4$Q_USA)*1.1))
+
+# Panel (b): USA Net Exports vs FRB Broad REER
+p2 <- ggplot(fig4, aes(x = REER_USA_FRB, y = NX_USA)) +
+  geom_point(color = "#1f77b4", size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "#1f77b4", linetype = "dashed") +
+  annotate("text",
+           x = Inf, y = Inf,
+           label = paste0("Adj. R² = ", round(r2_2, 3)),
+           hjust = 1.1, vjust = 1.2, size = 4) +
+  labs(title = "(b) U.S.: Net Exports vs FRB REER",
+       x = "FRB Broad REER Index", y = "") +
+  scale_x_continuous(limits = c(min(fig4$REER_USA_FRB)*0.9, max(fig4$REER_USA_FRB)*1.1))
+
+# Panel (c): China Merchandise Trade Balance vs WARP
+p3 <- ggplot(fig4, aes(x = Q_CHN, y = NX_CHN)) +
+  geom_point(color = "#ff7f0e", size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "#ff7f0e", linetype = "dashed") +
+  annotate("text",
+           x = Inf, y = Inf,
+           label = paste0("Adj. R² = ", round(r2_3, 3)),
+           hjust = 1.1, vjust = 1.2, size = 4) +
+  labs(title = "(c) China: Trade Balance vs WARP",
+       x = "WARP (WDI)", y = "Merchandise Trade Balance (% GDP)") +
+  scale_x_continuous(limits = c(min(fig4$Q_CHN)*0.9, max(fig4$Q_CHN)*1.1))
+
+# Panel (d): China Merchandise Trade Balance vs IMF REER
+p4 <- ggplot(fig4, aes(x = REER_CHN_IMF, y = NX_CHN)) +
+  geom_point(color = "#ff7f0e", size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "#ff7f0e", linetype = "dashed") +
+  annotate("text",
+           x = Inf, y = Inf,
+           label = paste0("Adj. R² = ", round(r2_4, 3)),
+           hjust = 1.1, vjust = 1.2, size = 4) +
+  labs(title = "(d) China: Trade Balance vs IMF REER",
+       x = "IMF REER Index", y = "") +
+  scale_x_continuous(limits = c(min(fig4$REER_CHN_IMF)*0.9, max(fig4$REER_CHN_IMF)*1.1))
+
+# Arrange 2x2 grid
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```

@@ -1,0 +1,78 @@
+---
+title: "Replication of Figure 3 from R13"
+author: ""
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: null
+    toc: false
+---
+
+```{r setup, include=FALSE}
+# Load libraries
+library(tidyverse)    # Data manipulation & ggplot2
+library(readr)        # CSV import
+library(broom)        # For tidy output
+library(gridExtra)    # For multi-panel arrangement
+
+# Theme settings
+theme_set(
+  theme_bw(base_size = 12) +
+    theme(
+      panel.grid.major = element_line(size = 0.2, color = "grey80"),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "top",
+      legend.title = element_blank()
+    )
+)
+```
+
+## Data Preparation
+
+```{r load-data}
+# Read Figure 3 data
+data3 <- read_csv("R13_figure3.csv")
+```
+
+## Plot Figure 3
+
+```{r plot-figure3, fig.width=8, fig.height=8}
+# (a) Bilateral relative prices: WDI vs PWT
+p_a <- data3 %>%
+  pivot_longer(
+    cols = starts_with("q_USA"),
+    names_to = c("partner","source"),
+    names_pattern = "q_USA_(.*)_(.*)"
+  ) %>%
+  mutate(
+    partner = toupper(partner),
+    source = ifelse(source == "WDI", "WDI", "PWT")
+  ) %>%
+  ggplot(aes(x = year, y = value, color = partner, linetype = source)) +
+  geom_line(size = 1) +
+  labs(title = "(a) U.S. Bilateral Relative Prices", x = NULL, y = expression(q[US~i])) +
+  scale_color_manual(values = c("JPN" = "#1f77b4", "DEU" = "#ff7f0e", "IND" = "#2ca02c", "KOR" = "#d62728")) +
+  scale_linetype_manual(values = c("WDI" = "solid", "PWT" = "dashed")) +
+  scale_x_continuous(breaks = seq(1980, 2007, 5))
+
+# (b) Weighted average: WDI vs PWT
+p_b <- data3 %>%
+  pivot_longer(
+    cols = c(Q_USA_WDI, Q_USA_PWT),
+    names_to = "source",
+    values_to = "WARP"
+  ) %>%
+  mutate(source = ifelse(source == "Q_USA_WDI", "WDI", "PWT")) %>%
+  ggplot(aes(x = year, y = WARP, linetype = source, color = source)) +
+  geom_line(size = 1) +
+  labs(title = "(b) Weighted Average of Relative Prices", x = "Year", y = "WARP") +
+  scale_color_manual(values = c("WDI"="#1f77b4","PWT"="#ff7f0e")) +
+  scale_linetype_manual(values = c("WDI"="solid","PWT"="dashed")) +
+  scale_x_continuous(breaks = seq(1980,2007,5))
+
+# Arrange panels vertically
+grid.arrange(p_a, p_b, ncol=1)
+```
+
+*Note:* Panel (a) compares bilateral q_{US,i} for Japan, Germany, India, and Korea using WDI and PWT PPP; Panel (b) compares the weighted geometric average (WARP) under both PPP sources. This replicates Figure 3 from R13 exactly. 

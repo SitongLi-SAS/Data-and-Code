@@ -1,0 +1,72 @@
+---
+title: "Replication of Figure 5 from R13"
+author: ""
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: null
+    toc: false
+---
+
+```{r setup, include=FALSE}
+# Load required packages
+library(tidyverse)   # Data manipulation and plotting
+library(readr)       # Reading CSV files
+library(ggpubr)      # Enhanced ggplot2 plotting
+library(broom)
+
+theme_set(theme_bw(base_size = 12) +
+            theme(
+              panel.grid.major = element_line(color = "grey80", size = 0.2),
+              panel.grid.minor = element_blank(),
+              legend.position = "right",
+              legend.title = element_blank()
+            ))
+```
+
+## Data Preparation
+
+```{r load-data, warning=FALSE, show_col_types = FALSE}
+# Read the data for Figure 5
+fig5 <- read_csv("R13_figure5.csv")
+
+# Compute adjusted R² by country
+r2_df <- fig5 %>%
+  group_by(country) %>%
+  do(glance(lm(NX_GDP ~ Q, data = .))) %>%
+  select(country, adj.r.squared) %>%
+  mutate(label = paste0("Adj. R² = ", round(adj.r.squared, 2)))
+```
+
+## Plot Figure 5
+
+```{r plot-figure5, fig.width=9, fig.height=6}
+# Multi-panel scatter: one panel per country (3 columns x 2 rows)
+p_fig5 <- ggplot(fig5, aes(x = Q, y = NX_GDP)) +
+  geom_point(color = "steelblue", size = 1.8) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkred", linetype = "dashed") +
+  facet_wrap(~ country, ncol = 3, scales = "free") +
+  # add adjusted R² labels in top-right of each facet
+  geom_text(
+    data = r2_df,
+    aes(x = Inf, y = Inf, label = label),
+    hjust = 1.1, vjust = 1.1,
+    size = 3
+  ) +
+  labs(
+    title = "Correlation between Net Exports and International Relative Prices",
+    subtitle = "Selected Countries (1980–2006)",
+    x = "WARP (WDI)",
+    y = "Net Exports (% GDP)"
+  ) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    panel.spacing = unit(1, "lines")
+  )
+
+print(p_fig5)
+```

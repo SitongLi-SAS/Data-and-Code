@@ -1,0 +1,137 @@
+---
+title: "Replication of Figure 2 from R13"
+output:
+  html_document:
+    df_print: paged
+    toc: false
+    theme: null
+---
+
+```{r setup, include=FALSE}
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+library(patchwork)
+
+# Set base theme
+theme_set(
+  theme_bw(base_size = 12) +
+    theme(
+      panel.grid.major = element_line(size = 0.2, color = "grey80"),
+      panel.grid.minor = element_blank(),
+      plot.tag = element_text(face = "bold", size = 14),
+      legend.position = "bottom",
+      legend.title = element_blank()
+    )
+)
+```
+
+## Data Preparation
+
+```{r load-data, include=FALSE}
+annual <- read_csv("R13_figure2.csv") %>%
+  filter(year >= 1980 & year <= 2007)
+
+# Quarterly time for smooth curves
+t <- seq(1980, 2007.75, by = 0.25)
+# extract quarter index for seasonality
+quarter <- ((t - floor(t)) * 4 + 1)
+interp <- function(x) spline(x = annual$year, y = x, xout = t, method = "natural")$y
+
+data <- tibble(
+  time  = t,
+  quarter = factor(quarter),
+  rel_price_USA        = interp(annual$rel_price_USA),
+  rel_price_CHN        = interp(annual$rel_price_CHN),
+  rel_price_USA_export = interp(annual$rel_price_USA_export),
+  rel_price_USA_import = interp(annual$rel_price_USA_import),
+  rel_price_CHN_export = interp(annual$rel_price_CHN_export),
+  rel_price_CHN_import = interp(annual$rel_price_CHN_import),
+  REER_USA             = interp(annual$REER_USA),
+  REER_CHN             = interp(annual$REER_CHN)
+)
+
+# Baseline for normalization in REER comparison
+base <- data %>% filter(time == 1980) %>% slice(1) %>%
+  select(rel_price_USA, rel_price_CHN, REER_USA, REER_CHN)
+```
+
+## Panels (with quarterly points)
+
+```{r panels, fig.width=8, fig.height=12}
+# (a) USA WARP
+p1_us <- ggplot(data, aes(x = time)) +
+  # quarterly raw points
+  geom_point(aes(y = rel_price_USA, shape = quarter),
+             color = "grey50", alpha = 0.4, size = 0.8) +
+  # smoothed line
+  geom_line(aes(y = rel_price_USA), color = "#1f77b4", size = 1) +
+  labs(tag = "(a)", title = "USA WARP", y = "WARP", x = NULL) +
+  scale_shape_discrete(guide = FALSE) +
+  scale_x_continuous(breaks = seq(1980, 2007, 5))
+
+# (b) China WARP
+p1_ch <- ggplot(data, aes(x = time)) +
+  geom_point(aes(y = rel_price_CHN, shape = quarter),
+             color = "grey50", alpha = 0.4, size = 0.8) +
+  geom_line(aes(y = rel_price_CHN), color = "#ff7f0e", size = 1, linetype = "dashed") +
+  labs(tag = "(b)", title = "China WARP", y = NULL, x = NULL) +
+  scale_shape_discrete(guide = FALSE) +
+  scale_x_continuous(breaks = seq(1980, 2007, 5))
+
+top_row <- p1_us + p1_ch + plot_layout(ncol = 2)
+
+# (c) USA: Composite vs Export vs Import
+p2_us <- ggplot(data, aes(x = time)) +
+  geom_point(aes(y = rel_price_USA), color = "grey50", alpha = 0.4, size = 2) +
+  geom_line(aes(y = rel_price_USA), color = "black", size = 2) +
+  geom_line(aes(y = rel_price_USA_export), color = "#1f77b4", size = 1) +
+  geom_line(aes(y = rel_price_USA_import), color = "#1f77b4", size = 1, linetype = "dashed") +
+  labs(tag = "(c)", title = "USA: Export (solid), Import (dashed)",
+       y = "WARP", x = NULL) +
+  scale_x_continuous(breaks = seq(1980, 2007, 5))
+
+# (d) China: Composite vs Export vs Import
+p2_ch <- ggplot(data, aes(x = time)) +
+  geom_point(aes(y = rel_price_CHN), color = "grey50", alpha = 0.4, size = 2) +
+  geom_line(aes(y = rel_price_CHN), color = "black", size = 2) +
+  geom_line(aes(y = rel_price_CHN_export), color = "#ff7f0e", size = 1) +
+  geom_line(aes(y = rel_price_CHN_import), color = "#ff7f0e", size = 1, linetype = "dashed") +
+  labs(tag = "(d)", title = "China: Export (solid), Import (dashed)",
+       y = NULL, x = NULL) +
+  scale_x_continuous(breaks = seq(1980, 2007, 5))
+
+mid_row <- p2_us + p2_ch + plot_layout(ncol = 2)
+
+# (e) USA: WARP vs REER
+p3_us <- ggplot(data, aes(x = time)) +
+  geom_point(aes(y = rel_price_USA / base$rel_price_USA),
+             color = "grey50", alpha = 0.4, size = 0.8) +
+  geom_line(aes(y = rel_price_USA / base$rel_price_USA),
+            color = "#1f77b4", size = 1) +
+  geom_line(aes(y = REER_USA / base$REER_USA),
+            color = "#1f77b4", size = 1, linetype = "dashed") +
+  labs(tag = "(e)", title = "USA: WARP (solid) vs REER (dashed)",
+       y = "Index (1980 Q1=1)", x = "Year") +
+  scale_x_continuous(breaks = seq(1980, 2007, 5))
+
+# (f) China: WARP vs REER
+p3_ch <- ggplot(data, aes(x = time)) +
+  geom_point(aes(y = rel_price_CHN / base$rel_price_CHN),
+             color = "grey50", alpha = 0.4, size = 0.8) +
+  geom_line(aes(y = rel_price_CHN / base$rel_price_CHN),
+            color = "#ff7f0e", size = 1, linetype = "solid") +
+  geom_line(aes(y = REER_CHN / base$REER_CHN),
+            color = "#ff7f0e", size = 1, linetype = "dashed") +
+  labs(tag = "(f)", title = "China: WARP vs REER",
+       y = NULL, x = "Year") +
+  scale_x_continuous(breaks = seq(1980, 2007, 5))
+
+bot_row <- p3_us + p3_ch + plot_layout(ncol = 2)
+
+# Combine all panels
+gg <- (top_row / mid_row / bot_row) & theme(legend.position = "none")
+print(gg)
+```

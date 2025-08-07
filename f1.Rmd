@@ -1,0 +1,184 @@
+---
+title: "Reproducing Figure 1"
+output: 
+  html_document:
+    toc: true
+    code_folding: hide
+---
+
+## Explanation
+
+```{r setup, warning=FALSE, include=FALSE}
+# Load required libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(zoo)    # for rolling means
+options(width = 80)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# Input parameters
+input_file <- "R13_figure1.csv"
+years      <- 1980:2007
+# Load raw data
+raw <- read.csv(input_file, stringsAsFactors = FALSE) %>%
+  filter(year %in% years)
+
+# Determine partner list dynamically
+partners <- sort(unique(raw$Country.Code))
+
+# Define line types per partner
+linetypes <- setNames(rep("solid", length(partners)), partners)
+linetypes[c("CHN","IND")] <- "dashed"
+linetypes[c("MEX","KOR")] <- "dotted"
+
+# Prepare relative price data frames
+# U.S. relative prices
+prices_us <- raw %>%
+  filter(Country.Code == "USA") %>%
+  pivot_longer(
+    cols = starts_with("rel_price_"),
+    names_to = "partner",
+    names_prefix = "rel_price_",
+    values_to = "rel_price"
+  )
+# China relative prices
+prices_ch <- raw %>%
+  filter(Country.Code == "CHN") %>%
+  pivot_longer(
+    cols = starts_with("rel_price_"),
+    names_to = "partner",
+    names_prefix = "rel_price_",
+    values_to = "rel_price"
+  )
+
+# Prepare trade weights
+weights <- raw %>%
+  select(year,
+         starts_with("world_export_share_USA_"),
+         starts_with("world_export_share_CHN_")) %>%
+  pivot_longer(
+    cols = -year,
+    names_to    = c("base","partner"),
+    names_pattern = "world_export_share_(.+?)_([^_]+)$",
+    values_to   = "share"
+  )
+data_all <- weights 
+```
+
+## Plot: Relative Prices and Smoothed Trade Weights
+
+```{r figure1, fig.width=10, fig.height=12}
+# Compute y-limits
+ylim_price_us <- range(prices_us$rel_price, na.rm = TRUE) * c(0.9, 1.05)
+ylim_price_ch <- range(prices_ch$rel_price, na.rm = TRUE) * c(0.9, 1.05)
+ymax_w        <- max(data_all$share, na.rm = TRUE)
+ylim_weight   <- c(0, ymax_w * 1.05)
+
+# Panel (a): U.S. Relative Prices with legend, colored LOESS lines
+p_us <- ggplot(prices_us %>% filter(partner != "USA"),
+               aes(x = year, y = rel_price,
+                   color = partner, linetype = partner)) +
+  # all partners lighter
+  geom_smooth(method = "loess", span = 0.3, se = FALSE,
+              size = 0.6, alpha = 0.7) +
+  # highlight China in bold black
+  geom_smooth(data = prices_us %>% filter(partner == "CHN"),
+              aes(x = year, y = rel_price),
+              method = "loess", span = 0.3, se = FALSE,
+              color = "black", size = 1.2, linetype = "solid") +
+  scale_color_manual(
+    name   = "Partner",
+    values = setNames(rainbow(length(partners)-1), partners[partners!="USA"]),
+    guide  = guide_legend(override.aes = list(
+                size  = c(rep(0.6, length(partners)-2), 1.2),
+                color = c(rainbow(length(partners)-2), "black")
+              ))
+  ) +
+  scale_linetype_manual(name = "Partner", values = linetypes) +
+  coord_cartesian(ylim = ylim_price_us) +
+  labs(tag = "(a)", title = "U.S. Relative Prices", y = "Domestic / Foreign", x = NULL) +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "right",
+    legend.title     = element_text(face = "bold"),
+    plot.tag         = element_text(face = "bold")
+  )
+
+# Panel (b): China Relative Prices with legend, colored LOESS lines
+p_ch <- ggplot(prices_ch %>% filter(partner != "CHN"),
+               aes(x = year, y = rel_price,
+                   color = partner, linetype = partner)) +
+  geom_smooth(method = "loess", span = 0.3, se = FALSE,
+              size = 0.6, alpha = 0.7) +
+  geom_smooth(data = prices_ch %>% filter(partner == "USA"),
+              aes(x = year, y = rel_price),
+              method = "loess", span = 0.3, se = FALSE,
+              color = "black", size = 1.2, linetype = "solid") +
+  scale_color_manual(
+    name   = "Partner",
+    values = setNames(rainbow(length(partners)-1), partners[partners!="CHN"]),
+    guide  = guide_legend(override.aes = list(
+                size  = c(rep(0.6, length(partners)-2), 1.2),
+                color = c(rainbow(length(partners)-2), "black")
+              ))
+  ) +
+  scale_linetype_manual(name = "Partner", values = linetypes) +
+  coord_cartesian(ylim = ylim_price_ch) +
+  labs(tag = "(b)", title = "China Relative Prices", y = NULL, x = NULL) +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "right",
+    legend.title     = element_text(face = "bold"),
+    plot.tag         = element_text(face = "bold")
+  )
+
+
+# Panel (c): U.S. Trade Weights – raw share, LOESS‐smoothed, all partners
+p_w_us <- ggplot(data_all %>% filter(base == "USA"),
+                     aes(x = year, y = share,
+                         color = partner, linetype = partner)) +
+  geom_smooth(method = "loess", span = 0.3, se = FALSE, size = 0.8) +
+  scale_color_manual(name = "Partner",
+                     values = setNames(rainbow(length(partners)), partners)) +
+  scale_linetype_manual(name = "Partner", values = linetypes) +
+  coord_cartesian(ylim = ylim_weight) +
+  labs(tag = "(c)", title = "U.S. Trade Weights (LOESS, raw)", 
+       y = "Share of Exports", x = NULL) +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "right",
+    legend.title     = element_text(face = "bold"),
+    plot.tag         = element_text(face = "bold")
+  )
+
+# Panel (d): China Trade Weights – raw share, LOESS‐smoothed, all partners
+p_w_ch <- ggplot(data_all %>% filter(base == "CHN"),
+                     aes(x = year, y = share,
+                         color = partner, linetype = partner)) +
+  geom_smooth(method = "loess", span = 0.3, se = FALSE, size = 0.8) +
+  scale_color_manual(name = "Partner",
+                     values = setNames(rainbow(length(partners)), partners)) +
+  scale_linetype_manual(name = "Partner", values = linetypes) +
+  coord_cartesian(ylim = ylim_weight) +
+  labs(tag = "(d)", title = "China Trade Weights (LOESS, raw)", 
+       y = NULL, x = "Year") +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position  = "right",
+    legend.title     = element_text(face = "bold"),
+    plot.tag         = element_text(face = "bold")
+  )
+
+# Arrange panels (a)–(d)
+figure1 <- (p_us | p_ch) / (p_w_us | p_w_ch) +
+  plot_layout(heights = c(1, 1))
+
+print(figure1)
+
+```
