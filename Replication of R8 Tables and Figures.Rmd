@@ -1,0 +1,1120 @@
+---
+title: "Replication of R8 Tables and Figures"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
+                      fig.width = 6, fig.height = 4)
+# Load libraries
+library(tidyverse)
+library(plm)
+library(moments)
+library(tseries)
+library(quantreg)
+library(WDI)
+library(kableExtra)
+library(panelvar)
+library(quantreg)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(broom)
+library(sandwich)
+library(purrr)
+library(tibble)
+library(sandwich)
+library(future.apply)
+```
+
+## Load Data
+
+```{r load-data}
+# Read the cleaned dataset
+data <- read.csv("R8_cleaned_data.csv")
+data <- data %>%
+  rename(country = Country, year = Year,
+         CO2 = CO2_emissions, GDP = GDP_constant_USD, ENEF = Energy_Efficiency, FE = Financial_Expansion, RDE = RDE) %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  mutate(across(c(CO2,GDP,ENEF,FE,RDE), ~as.numeric(.))) %>%
+  ungroup()
+data <- data %>%
+  mutate(
+    GDP = as.numeric(GDP),
+    GDP = ifelse(GDP > 0, GDP, NA_real_),
+    lGDP = log(GDP)
+  )
+
+# Convert to panel data frame
+pdat <- pdata.frame(data, index = c("country","year"))
+```
+
+# Table 1: Descriptive Statistics and Jarque-Bera Normality Test
+
+```{r table1-descriptive, results='asis'}
+vars <- c("CO2","FE","GDP","ENEF","RDE")
+stat_levels <- c("Mean","Median","Maximum","Minimum",
+                 "Std. Dev.","Skewness","Kurtosis",
+                 "Jarque-Bera","Probability","Observations")
+
+# 单变量描述统计（注意：kurtosis 用非“excess”口径以贴合原文）
+one_var <- function(v){
+  x <- as.numeric(data[[v]])
+  jb <- tseries::jarque.bera.test(x)
+  tibble(
+    Variable      = v,
+    `Mean`        = mean(x, na.rm = TRUE),
+    `Median`      = median(x, na.rm = TRUE),
+    `Maximum`     = max(x, na.rm = TRUE),
+    `Minimum`     = min(x, na.rm = TRUE),
+    `Std. Dev.`   = sd(x, na.rm = TRUE),
+    `Skewness`    = moments::skewness(x, na.rm = TRUE),
+    # moments::kurtosis() 返回“超额峰度”（正态=0），要非超额就 +3
+    `Kurtosis`    = moments::kurtosis(x, na.rm = TRUE) + 3,
+    `Jarque-Bera` = as.numeric(jb$statistic),
+    `Probability` = as.numeric(jb$p.value),
+    `Observations`= sum(!is.na(x))
+  )
+}
+
+raw_tbl <- purrr::map_dfr(vars, one_var)
+
+# 转成“行=统计量、列=变量”，并按原文顺序排
+tbl1 <- raw_tbl %>%
+  pivot_longer(-Variable, names_to="Stat", values_to="Value") %>%
+  mutate(Stat = factor(Stat, levels = stat_levels)) %>%
+  arrange(Stat) %>%
+  pivot_wider(names_from = Variable, values_from = Value)
+
+# —— 按原文风格格式化（CO2 千分位；GDP 科学计数；其余保留 5~6 位小数；JB/Prob/Obs 专门格式）——
+fmt_cell <- function(stat, var, val){
+  if (is.na(val)) return("")
+  switch(stat,
+    "Mean" = {
+      if (var=="GDP") toupper(formatC(val, format="e", digits=2))
+      else if (var=="CO2") formatC(val, format="f", digits=0, big.mark = ",")
+      else formatC(val, format="f", digits=6)
+    },
+    "Median" = {
+      if (var=="GDP") toupper(formatC(val, format="e", digits=2))
+      else if (var=="CO2") formatC(val, format="f", digits=0, big.mark = ",")
+      else formatC(val, format="f", digits=6)
+    },
+    "Maximum" = {
+      if (var=="GDP") toupper(formatC(val, format="e", digits=2))
+      else if (var=="CO2") formatC(val, format="f", digits=0, big.mark = ",")
+      else formatC(val, format="f", digits=6)
+    },
+    "Minimum" = {
+      if (var=="GDP") toupper(formatC(val, format="e", digits=2))
+      else if (var=="CO2") formatC(val, format="f", digits=0, big.mark = ",")
+      else formatC(val, format="f", digits=6)
+    },
+    "Std. Dev." = {
+      if (var=="GDP") toupper(formatC(val, format="e", digits=2))
+      else if (var=="CO2") formatC(val, format="f", digits=0, big.mark = ",")
+      else formatC(val, format="f", digits=6)
+    },
+    "Skewness"  = formatC(val, format="f", digits=6),
+    "Kurtosis"  = formatC(val, format="f", digits=6),
+    "Jarque-Bera" = formatC(val, format="f", digits=4, big.mark = ","),
+    "Probability" = formatC(val, format="f", digits=6),
+    "Observations"= formatC(val, format="f", digits=0, big.mark = ","),
+    formatC(val, format="f", digits=3)
+  )
+}
+
+tbl1_fmt <- tbl1
+for (v in vars) {
+  tbl1_fmt[[v]] <- mapply(function(st, val) fmt_cell(st, v, val),
+                          tbl1_fmt$Stat, tbl1_fmt[[v]])
+}
+
+# 打印：列=变量，行=统计量；标题与原文一致
+knitr::kable(
+  tbl1_fmt,
+  booktabs = TRUE,
+  col.names = c("","CO\u2082","FE","GDP","ENEF","RDE"),
+  align = c("l","r","r","r","r","r"),
+  caption = "Table 1  Descriptive analytics and normality"
+) %>%
+  kableExtra::kable_classic(full_width = FALSE)
+
+```  
+
+# Table 2: Slope Homogeneity and Cross-Section Dependence
+
+```{r table2-diagnostics, results='asis'}
+# ---- 数据准备 ----
+ yvar  <- "CO2"
+ xvars <- c("lGDP","ENEF","FE","RDE")  # 只用“列名”
+
+table2_all <- function(pdat, y, xcols,
+                       weight = c("limited","identity"),
+                       sigma_floor_q   = 0.30,
+                       eig_floor_scale = 1e-5,
+                       ridge_scale     = 5e-6,
+                       scale_Wi        = TRUE,
+                       use_lGDP_for_cd = TRUE) {
+  weight <- match.arg(weight)
+  df <- as.data.frame(pdat)
+  stopifnot(all(c(y, xcols) %in% names(df)))
+
+  # ---------- PY（within 口径） ----------
+  rows_idx <- which(stats::complete.cases(df[, c(y, xcols)]))
+  if (length(rows_idx) == 0) stop("经过 NA 处理后无样本。")
+  y_all <- as.numeric(df[[y]][rows_idx])
+  X_all <- as.matrix(df[rows_idx, xcols, drop = FALSE])
+  id    <- df$country[rows_idx]
+
+  split_idx <- split(seq_along(rows_idx), id)
+  Xw <- X_all * NA_real_; yw <- y_all * NA_real_
+  for (ix in split_idx){
+    Xi <- X_all[ix, , drop = FALSE]; yi <- y_all[ix]
+    Xw[ix, ] <- sweep(Xi, 2, colMeans(Xi), FUN = "-");  yw[ix] <- yi - mean(yi)
+  }
+
+  nzv <- apply(Xw, 2, function(z) stats::sd(z) > 0)
+  if (!any(nzv)) stop("pooled within 后所有自变量都为常数。")
+  Xw_pool <- Xw[, nzv, drop = FALSE]
+  pool_df <- data.frame(yw = yw, Xw_pool, check.names = FALSE)
+  pool_fit <- lm(yw ~ . - 1, data = pool_df)
+  keep <- names(coef(pool_fit)); k <- length(keep); if (k == 0) stop("FE-pooled 无可识别自变量。")
+  bpool <- coef(pool_fit)
+  keep_idx <- match(keep, colnames(Xw)); if (anyNA(keep_idx)) stop("内部列名不一致。")
+
+  stats_list <- lapply(split_idx, function(ix){
+    Xi <- Xw[ix, keep_idx, drop = FALSE]; yi <- yw[ix]
+    if (nrow(Xi) <= k + 1) return(NULL)
+    if (any(apply(Xi, 2, function(z) stats::sd(z) == 0))) return(NULL)
+    fit_i <- lm(yi ~ Xi - 1); bi <- coef(fit_i); if (length(bi) != k) return(NULL)
+    sigma2 <- sum(resid(fit_i)^2) / df.residual(fit_i); XX <- crossprod(Xi)
+    list(bi = bi, sigma2 = as.numeric(sigma2), XX = XX, T_i = nrow(Xi))
+  })
+  stats_list <- Filter(Negate(is.null), stats_list)
+  N_used <- length(stats_list); if (N_used == 0) stop("没有国家在 within 口径下可用。")
+
+  bi_mat   <- do.call(cbind, lapply(stats_list, function(x) x$bi))
+  sigma2_v <- vapply(stats_list, function(x) x$sigma2, numeric(1))
+  XX_list  <- lapply(stats_list, function(x) x$XX)
+  Ti_vec   <- vapply(stats_list, function(x) x$T_i, numeric(1))
+
+  S <- 0
+  if (weight == "identity") {
+    for (i in seq_len(N_used)) { db <- bi_mat[, i] - bpool; S <- S + as.numeric(t(db) %*% diag(1, k) %*% db) }
+    floor_sig2 <- NA_real_
+  } else {
+    floor_sig2 <- max(stats::quantile(sigma2_v, sigma_floor_q, na.rm = TRUE), 1e-8)
+    for (i in seq_len(N_used)) {
+      db <- bi_mat[, i] - bpool
+      sig2 <- max(sigma2_v[i], floor_sig2)
+      ev <- eigen(XX_list[[i]], symmetric = TRUE)
+      eps <- max(1e-8, eig_floor_scale * stats::median(ev$values, na.rm = TRUE))
+      XXs <- ev$vectors %*% diag(pmax(ev$values, eps), k) %*% t(ev$vectors)
+      Wi <- XXs / sig2
+      if (scale_Wi) {
+        dmed <- stats::median(diag(Wi), na.rm = TRUE)
+        if (is.finite(dmed) && dmed > 0) Wi <- Wi / dmed
+      }
+      Wi <- Wi + diag(max(1e-8, ridge_scale * stats::median(diag(Wi), na.rm = TRUE)), k)
+      S  <- S + as.numeric(t(db) %*% Wi %*% db)
+    }
+  }
+
+  delta  <- (S - k * N_used) / sqrt(2 * k * N_used)
+  Tbar   <- mean(Ti_vec)
+  cT     <- sqrt((Tbar - k - 1) / (Tbar - 1))
+  deltaA <- cT * delta
+  star <- function(p) ifelse(p<.01,"***", ifelse(p<.05,"**", ifelse(p<.1,"*","")))
+  p1 <- 2 * pnorm(-abs(delta)); p2 <- 2 * pnorm(-abs(deltaA))
+  slope_stats <- tibble(Test=c("Δ̃ (SCH)","Δ̃ Adjusted (ASCH)"),
+                        Statistic=c(delta,deltaA), `p-value`=c(p1,p2),
+                        Signif=c(star(p1),star(p2)))
+  slope_diag <- list(k=k, N_used=N_used, Tbar=Tbar, floor_sig2=floor_sig2)
+
+  # ---------- Pesaran CD ----------
+  has_lGDP <- use_lGDP_for_cd && ("lGDP" %in% names(df))
+  gdp_col  <- if (has_lGDP) "lGDP" else "GDP"
+  gdp_disp <- if (has_lGDP) "log(GDP)" else "GDP"
+
+  var_pairs <- tibble::tibble(
+    Display = c("CO2", gdp_disp, "ENEF", "FE", "RDE"),
+    Col     = c("CO2", gdp_col, "ENEF", "FE", "RDE")
+  )
+
+  cd_one <- function(colname, display){
+    if (!colname %in% names(df)) {
+      return(tibble(Variable = display, `CD-Stats` = NA_real_, `p-value` = NA_real_, Signif = ""))
+    }
+    # 关键修复：不要用 reformulate(NULL, ...)，改成 ~ 1 的公式
+    fml_cd <- as.formula(paste(colname, "~ 1"))
+    mdl <- plm::plm(fml_cd, data = pdat, model = "pooling", na.action = na.omit)
+    tst <- plm::pcdtest(mdl, test = "cd")
+    stat <- unname(as.numeric(tst$statistic)); pval <- unname(as.numeric(tst$p.value))
+    tibble(Variable = display, `CD-Stats` = stat, `p-value` = pval, Signif = star(pval))
+  }
+
+  tab_cd <- purrr::pmap_dfr(list(var_pairs$Col, var_pairs$Display),
+                            ~ cd_one(..1, ..2))
+
+  # ---------- 打印 ----------
+  kable(slope_stats, booktabs = TRUE,
+        align = c("l","c","c","c"),
+        col.names = c("Test","Statistic","p-value","Signif."),
+        caption = "Table 2  Slope homogeneity (Pesaran–Yamagata, within-spec)") %>%
+    kable_classic(full_width = FALSE) %>% print()
+
+  kable(tab_cd, booktabs = TRUE,
+        align = c("l","c","c","c"),
+        col.names = c("Variable","CD-Stats","p-value","Signif."),
+        caption = "Table 2  Cross-sectional dependence (Pesaran CD)") %>%
+    kable_classic(full_width = FALSE) %>% print()
+
+  invisible(list(slope = slope_stats, cd = tab_cd, diagnostics = slope_diag))
+}
+
+res <- table2_all(
+  pdat, y = yvar, xcols = xvars,
+  weight = "limited",
+  sigma_floor_q = 0.30, eig_floor_scale = 1e-5, ridge_scale = 5e-6
+)
+```  
+# Table 3: Panel Unit Root Test (CIPS by Pesaran 2007)
+
+```{r table3-unit-root, results='asis'}
+# ==== helpers ====
+.make_mat <- function(df, var, min_T = 6){
+  W <- df %>%
+    select(country, year, value = .data[[var]]) %>%
+    arrange(year) %>%
+    tidyr::pivot_wider(names_from = country, values_from = value) %>%
+    arrange(year) %>% select(-year)
+  X <- as.matrix(W)
+  # 至少 min_T 期的国家才保留（给滞后/趋势留空间）
+  keep <- colSums(!is.na(X)) >= min_T
+  X[, keep, drop = FALSE]
+}
+
+# 单国 CADF（含截面均值项），返回 y_{t-1} 的 t 值
+.cadf_tstat <- function(y, ybar, p = 1, type = c("trend","drift")){
+  type <- match.arg(type)
+
+  # 差分与滞后
+  dy      <- diff(y)
+  y_l1    <- head(y, -1)
+  dybar   <- diff(ybar)
+  ybar_l1 <- head(ybar, -1)
+
+  # 目标：构造齐头的设计矩阵行数 = nrow(Z)
+  Z        <- embed(dy, p + 1)                # [dy_t, dy_{t-1}, ..., dy_{t-p}]
+  dyt      <- Z[, 1, drop = FALSE]
+  dylag    <- if (p > 0) Z[, -1, drop = FALSE] else NULL
+
+  cut_k     <- nrow(Z)
+  y_l1      <- tail(y_l1, cut_k)
+  ybar_l1   <- tail(ybar_l1, cut_k)
+  dYbar     <- embed(dybar, p + 1)
+  dYbar_lag <- if (p > 0) dYbar[, -1, drop = FALSE] else NULL
+
+  # 组装数据框（每块先命名，再合并）
+  df <- data.frame(
+    dyt      = as.numeric(dyt),
+    y_l1     = as.numeric(y_l1),
+    ybar_l1  = as.numeric(ybar_l1),
+    stringsAsFactors = FALSE
+  )
+
+  pred_names <- c("y_l1","ybar_l1")
+
+  if (p > 0) {
+    dylag_df <- as.data.frame(dylag)
+    colnames(dylag_df) <- paste0("dylag", seq_len(p))
+    dYbar_df <- as.data.frame(dYbar_lag)
+    colnames(dYbar_df) <- paste0("dYbar_lag", seq_len(p))
+    df <- cbind(df, dylag_df, dYbar_df)
+    pred_names <- c(pred_names, colnames(dylag_df), colnames(dYbar_df))
+  }
+
+  if (type == "trend") {
+    df$trend <- seq_len(nrow(df))
+    pred_names <- c(pred_names, "trend")
+  }
+  # CADF 常见做法含常数项——这里显式放一个常数列，避免 R 默认截距与手写不一致
+  df$const <- 1
+  pred_names <- c(pred_names, "const")
+
+  # 保险：确认公式里的自变量都在 df 里
+  missing_cols <- setdiff(pred_names, colnames(df))
+  if (length(missing_cols) > 0) {
+    stop(sprintf("设计矩阵缺失列：%s", paste(missing_cols, collapse=", ")))
+  }
+
+  # 用实际列名生成公式
+  fml <- reformulate(termlabels = pred_names, response = "dyt")
+
+  fit  <- lm(fml, data = df)
+  coefs <- summary(fit)$coefficients
+
+  # 返回 y_l1 的 t 值
+  as.numeric(coefs["y_l1", "t value"])
+}
+
+# CIPS 统计量（横截面平均 CADF t 值）
+.cips_stat <- function(X, p = 1, type = c("trend","drift")){
+  type <- match.arg(type)
+  ybar <- rowMeans(X, na.rm = TRUE)
+  tvec <- apply(X, 2, function(y){
+    if (sum(!is.na(y)) < (p + 6)) return(NA_real_)
+    .cadf_tstat(as.numeric(y), ybar, p = p, type = type)
+  })
+  mean(tvec, na.rm = TRUE)
+}
+
+# 参数自举 p 值：单位根 + 共同因子（简化 DGP）
+.cips_boot_p <- function(X, stat_obs, p = 1, type = c("trend","drift"), Rboot = 400, seed = 123){
+  type <- match.arg(type); set.seed(seed)
+  Tn <- nrow(X); Nn <- ncol(X)
+  if (Tn < (p + 6) || Nn < 2) return(NA_real_)
+
+  # 用样本估计 Δy 的公共因子与载荷
+  dX   <- apply(X, 2, diff)                            # (T-1) × N
+  fhat <- rowMeans(dX, na.rm = TRUE)                   # 公因子代理
+  lam  <- apply(dX, 2, function(col){
+    fit <- try(lm(col ~ fhat), silent = TRUE)
+    if (inherits(fit, "try-error")) 0 else unname(coef(fit)[2])
+  })
+  # idio 残差方差
+  eps_mat <- sapply(seq_len(Nn), function(j){
+    fit <- try(lm(dX[, j] ~ fhat), silent = TRUE)
+    if (inherits(fit, "try-error")) rep(NA_real_, nrow(dX)) else residuals(fit)
+  })
+  sig2_eps <- apply(eps_mat, 2, function(z) stats::var(z, na.rm = TRUE))
+  sig2_f   <- stats::var(fhat, na.rm = TRUE)
+
+  # 初值 = 样本首行
+  y0 <- X[1, ]
+
+  sims <- replicate(Rboot, {
+    df_star   <- rnorm(Tn - 1, sd = sqrt(max(sig2_f, 1e-8)))
+    Eps_star  <- matrix(rnorm((Tn - 1) * Nn), nrow = Tn - 1, ncol = Nn)
+    Eps_star  <- sweep(Eps_star, 2, sqrt(pmax(sig2_eps, 1e-8)), `*`)
+    dX_star   <- outer(df_star, lam) + Eps_star          # (T-1) × N
+    X_star    <- rbind(y0, apply(dX_star, 2, function(col) y0 + cumsum(col)))
+    .cips_stat(X_star, p = p, type = type)
+  })
+  mean(sims <= stat_obs, na.rm = TRUE)  # 左尾 p 值
+}
+
+# ====== 小工具：星号 ======
+fmt_stars <- function(p) ifelse(p < 0.01, "***",
+                          ifelse(p < 0.05, "**",
+                          ifelse(p < 0.10, "*", "")))
+
+# ====== 一个面板块（给定确定项配置）：返回 I(0)/I(1) 及 p 值 ======
+cips_block <- function(data, vars,
+                       type_level = "trend",  # "trend"=Trend+Intercept, "drift"=C only
+                       type_diff  = "drift",
+                       p_level = 1, p_diff = 1,
+                       Rboot = 400, min_T = 6, seed = 123) {
+  purrr::map_dfr(vars, ~{
+    X <- .make_mat(data, .x, min_T = min_T)
+    stopifnot(ncol(X) >= 2)
+
+    # I(0)：水平
+    stat0 <- .cips_stat(X,  p = p_level, type = type_level)
+    p0    <- .cips_boot_p(X, stat0,     p = p_level, type = type_level, Rboot = Rboot, seed = seed)
+
+    # I(1)：一阶差分
+    Xd    <- diff(X, lag = 1)
+    stat1 <- .cips_stat(Xd, p = p_diff,  type = type_diff)
+    p1    <- .cips_boot_p(Xd, stat1,     p = p_diff,  type = type_diff,  Rboot = Rboot, seed = seed)
+
+    tibble::tibble(
+      Variable = .x,
+      I0_stat = stat0, I0_p = p0,
+      I1_stat = stat1, I1_p = p1,
+      `I(0)`  = sprintf("%.3f%s", I0_stat, fmt_stars(I0_p)),
+      `I(1)`  = sprintf("%.3f%s", I1_stat, fmt_stars(I1_p))
+    )
+  })
+}
+
+# ====== 主函数：双面板合并，并按原文格式排版 ======
+cips_table_dual <- function(data, vars,
+                            p_level = 1, p_diff = 1,
+                            Rboot = 400, min_T = 6, seed = 123,
+                            alpha_order = 0.10,
+                            order_priority = c("I1","I0"),   # <—— 新增
+                            print_kable = TRUE) {
+
+  order_priority <- match.arg(order_priority)
+
+  top <- cips_block(data, vars, type_level = "trend", type_diff = "drift",
+                    p_level = p_level, p_diff = p_diff, Rboot = Rboot, min_T = min_T, seed = seed)
+
+  bottom <- cips_block(data, vars, type_level = "drift", type_diff = "drift",
+                       p_level = p_level, p_diff = p_diff, Rboot = Rboot, min_T = min_T, seed = seed)
+
+  # 按上半面板的 p 值判定阶数（原文两面板给的结论一致；不一致时也会显式为 Inconclusive）
+ order_col <- if (order_priority == "I1") {
+    top |>
+      dplyr::mutate(`Order of Integration` = dplyr::case_when(
+        I1_p < alpha_order ~ "I(1)",
+        I0_p < alpha_order ~ "I(0)",
+        TRUE               ~ "Inconclusive"
+      )) |>
+      dplyr::select(Variable, `Order of Integration`)
+  } else {
+    top |>
+      dplyr::mutate(`Order of Integration` = dplyr::case_when(
+        I0_p < alpha_order ~ "I(0)",
+        I1_p < alpha_order ~ "I(1)",
+        TRUE               ~ "Inconclusive"
+      )) |>
+      dplyr::select(Variable, `Order of Integration`)
+  }
+  # -------------------------------------------
+
+  top_out    <- dplyr::left_join(top[, c("Variable","I(0)","I(1)")], order_col, by = "Variable")
+  bottom_out <- dplyr::left_join(bottom[, c("Variable","I(0)","I(1)")], order_col, by = "Variable")
+  out <- dplyr::bind_rows(top_out, bottom_out)
+
+  if (print_kable) {
+    knitr::kable(out,
+      col.names = c("Variable(s)", "I(0)", "I(1)", "Order of Integration"),
+      align = c("l","c","c","c"),
+      caption = "Table 3  Unit root testing"
+    ) |>
+      kableExtra::kable_classic(full_width = FALSE) |>
+      kableExtra::pack_rows("Pesaran (2007): Trend and Intercept", 1, nrow(top_out)) |>
+      kableExtra::pack_rows("Pesaran (2007): with C only", nrow(top_out)+1, nrow(out)) |>
+      kableExtra::footnote(
+        general = paste0(
+          "Asterisks: 1% (***), 5% (**), 10% (*). ",
+          "Order-of-integration label follows priority '", order_priority,
+          "': if first-difference rejects at ", alpha_order*100, "%, label I(1); else check level. ",
+          "p-values from parametric bootstrap under unit-root + common-factor null (R=", Rboot, ")."
+        ),
+        threeparttable = TRUE
+      ) |>
+      print()
+  }
+
+  invisible(list(trend_intercept = top_out, c_only = bottom_out, combined = out))
+}
+
+vars <- c("CO2","GDP","ENEF","FE","RDE")
+res_tab3_dual <- cips_table_dual(
+  data, vars = c("CO2","GDP","ENEF","FE","RDE"),
+  p_level = 1, p_diff = 1, Rboot = 400, min_T = 6, seed = 123,
+  alpha_order = 0.10, order_priority = "I1",  # 关键
+  print_kable = TRUE
+)
+```  
+
+# Table 4: Westerlund (2007) Cointegration Test
+
+```{r table4-cointegration, results='asis'}
+#--- 1) 构造 ECM 面板（一次性完成） ----
+mk_ecm_fast <- function(pd){
+  df <- as.data.frame(pd) %>%
+    arrange(country, year) %>%
+    group_by(country) %>%
+    mutate(
+      y   = CO2,
+      L1y = dplyr::lag(CO2, 1),
+      X1  = log(GDP),
+      X2  = ENEF, X3 = FE, X4 = RDE,
+      dY  = dplyr::lag(CO2, 0) - dplyr::lag(CO2, 1),
+      dX1 = dplyr::lag(log(GDP), 0) - dplyr::lag(log(GDP), 1),
+      dX2 = dplyr::lag(ENEF, 0) - dplyr::lag(ENEF, 1),
+      dX3 = dplyr::lag(FE,   0) - dplyr::lag(FE,   1),
+      dX4 = dplyr::lag(RDE,  0) - dplyr::lag(RDE,  1)
+    ) %>%
+    ungroup() %>%
+    select(country, year, y, L1y, dY, dX1, dX2, dX3, dX4) %>%
+    filter(complete.cases(.))
+  df
+}
+
+ecm_df <- mk_ecm_fast(pdat)
+
+# 按国拆分（只做一次）
+by_cty   <- split(ecm_df, ecm_df$country)
+Ti_vec   <- vapply(by_cty, nrow, integer(1))
+nw_lag_i <- pmax(0L, as.integer(floor(4 * (Ti_vec/100)^(2/9))))
+
+#--- 2) 单国回归，产出 Westerlund 需要的两类量 ----
+fit_one <- function(df_i, nw_lag = 0, speed_mode = c("paper","fast")){
+  speed_mode <- match.arg(speed_mode)
+  # 动态计算：L1y + dX1..dX4 的有效个数（含截距的总参数 = kx + 1）
+  kx <- sum(c("L1y","dX1","dX2","dX3","dX4") %in% names(df_i))
+  if (nrow(df_i) <= kx + 5) return(NULL)   # 原来 KX+10 的温和版门槛
+
+  fit <- lm(dY ~ L1y + dX1 + dX2 + dX3 + dX4, data = df_i)  # lm 默认含截距
+  V   <- if (speed_mode == "paper") {
+           sandwich::NeweyWest(fit, lag = nw_lag, prewhite = FALSE)
+         } else {
+           sandwich::vcovHC(fit, type = "HC1")
+         }
+  co  <- coef(fit); se <- sqrt(diag(V))
+  if (!("L1y" %in% names(co))) return(NULL)
+  phi  <- unname(co["L1y"]); se_phi <- unname(se["L1y"])
+  tphi <- as.numeric(phi / se_phi)
+  ratio<- as.numeric(phi / sd(df_i$L1y, na.rm = TRUE))
+  c(phi = phi, t_phi = tphi, ratio = ratio)
+}
+
+#--- 3) Group 与 Panel 统计量（原样） ----
+westerlund_stats <- function(df, by_list, nw_lags, speed_mode = c("paper","fast")){
+  speed_mode <- match.arg(speed_mode)
+  # 逐国
+  per <- lapply(seq_along(by_list), function(i){
+    fit_one(by_list[[i]], nw_lag = nw_lags[i], speed_mode = speed_mode)
+  })
+  per <- per[!vapply(per, is.null, logical(1))]
+  per_mat <- do.call(rbind, per)
+  Gt <- mean(per_mat[, "t_phi"], na.rm = TRUE)
+  Ga <- mean(per_mat[, "ratio"], na.rm = TRUE)
+
+  # 池化
+  fit_p <- lm(dY ~ L1y + dX1 + dX2 + dX3 + dX4 + 1, data = df)
+  Vp    <- if (speed_mode == "paper") {
+             sandwich::NeweyWest(fit_p, lag = floor(4*(nrow(df)/100)^(2/9)), prewhite = FALSE)
+           } else {
+             sandwich::vcovHC(fit_p, type = "HC1")
+           }
+  phi_p <- coef(fit_p)["L1y"]; se_p <- sqrt(diag(Vp))["L1y"]
+  Pt    <- as.numeric(phi_p / se_p)
+  Pa    <- as.numeric(phi_p / sd(df$L1y))
+  c(Gt = Gt, Ga = Ga, Pt = Pt, Pa = Pa)
+}
+
+#--- 4) 移动区块重抽：只重采索引，块内保序（更快且更合理） ----
+sample_blocks_idx <- function(n, b){
+  k <- ceiling(n / b)
+  starts <- sample.int(n - b + 1, k, replace = TRUE)
+  idx <- unlist(lapply(starts, function(s) s:(s + b - 1)))
+  idx[seq_len(n)]
+}
+
+# 为每个国家准备一份“索引长度 n_i”
+cty_names <- names(by_cty)
+n_i       <- vapply(by_cty, nrow, integer(1))
+# 每国区块长度（经验型）：b_i = ceiling(T_i^(1/3))
+b_i       <- pmax(2L, ceiling(n_i^(1/3)))
+
+boot_once <- function(speed_mode = c("paper","fast")){
+  speed_mode <- match.arg(speed_mode)
+  # 拼接各国的 bootstrap 行索引
+  idx_list <- lapply(seq_along(by_cty), function(j){
+    ix  <- sample_blocks_idx(n_i[j], b_i[j])
+    rows <- rownames(by_cty[[j]])[ix]  # 保持到 ecm_df 的行号映射
+    rows
+  })
+  boot_rows <- as.integer(unlist(idx_list, use.names = FALSE))
+  dfb <- ecm_df[boot_rows, , drop = FALSE]
+  westerlund_stats(dfb, split(dfb, dfb$country), nw_lags = nw_lag_i, speed_mode = speed_mode)
+}
+
+#--- 5) 观测统计量与自举 p 值（并行 + 可复现） ----
+# speed_mode:  "fast"  → HC1 + 自举更少（开发/调试）
+#              "paper" → NeweyWest + 400/800（成稿）
+speed_mode <- "paper"     # 改成 "fast" 可显著加速
+Rboot      <- 400         # 调试时 200；成稿建议 400/800
+obs <- westerlund_stats(ecm_df, by_cty, nw_lags = nw_lag_i, speed_mode = speed_mode)
+
+plan(multisession, workers = max(1, parallel::detectCores() - 1))
+set.seed(20250808)
+Bmat <- future_replicate(
+  Rboot, boot_once(speed_mode = speed_mode),
+  future.seed = TRUE, simplify = "matrix"
+)
+# 左尾 p 值
+pvals <- colMeans(t(Bmat) <= obs, na.rm = TRUE)
+names(pvals) <- names(obs)
+
+#--- 6) 排版（与原文 Table 4 一致的“值 + 星号”） ----
+stat_order <- c("Gt","Ga","Pt","Pa")
+obs   <- obs[stat_order]
+pvals <- pvals[stat_order]
+
+# stars & Z-values (left-tail). clip p to avoid -Inf
+p_clip <- pmin(pmax(pvals, 1/(Rboot + 1)), 1 - 1/(Rboot + 1))
+zvals  <- stats::qnorm(p_clip)
+
+star <- function(p) ifelse(p < .01,"***", ifelse(p < .05,"**", ifelse(p < .1,"*","")))
+fmtv <- function(x, p) paste0(formatC(x, format = "f", digits = 3), star(p))
+
+tab4 <- tibble::tibble(
+  Statistic = c("$G_t$", "$G_a$", "$P_t$", "$P_a$"),
+  Value     = mapply(fmtv, unname(obs), unname(pvals)),
+  `Z-value` = formatC(unname(zvals), format = "f", digits = 3)
+)
+
+knitr::kable(
+  tab4, booktabs = TRUE, escape = FALSE, align = c("l","c","c"),
+  col.names = c("Statistic","Value","Z-value"),
+  caption   = "Table 4  Cointegration test"
+) %>%
+  kableExtra::add_header_above(c("Westerlund (2007) cointegration test (model 1)" = 3)) %>%
+  kableExtra::kable_classic(full_width = FALSE) %>%
+  kableExtra::footnote(
+    general = "Asterisks indicate a statistical significance level of 1% (***), 5% (**), and 10% (*).",
+    threeparttable = TRUE
+  )
+```  
+
+# Table 5: MMQR Quantile Regression Results
+
+```{r table5-mmqr, results='asis'}
+
+# —— 数据清洗：确保 log() 不出 -Inf/NA，且每列为 numeric ——
+df <- data %>%
+  mutate(
+    CO2  = as.numeric(CO2),
+    GDP  = suppressWarnings(as.numeric(GDP)),
+    GDP  = ifelse(GDP > 0, GDP, NA_real_),   # 仅保留可取对数的 GDP
+    ENEF = as.numeric(ENEF),
+    FE   = as.numeric(FE),
+    RDE  = as.numeric(RDE)
+  ) %>%
+  filter(complete.cases(CO2, GDP, ENEF, FE, RDE))
+
+# 设定（保持你原有写法）
+taus       <- c(0.25, 0.5, 0.75)
+qvec       <- qlogis(taus); names(qvec) <- c("Q25","Q50","Q75")
+form       <- log(CO2) ~ log(GDP) + ENEF + FE + RDE
+term_order <- c("(Intercept)","log(GDP)","ENEF","FE","RDE")
+# ★ 新增：行名→展示名映射，避免 knit 时找不到 term_labels
+term_labels <- c(
+  "(Intercept)" = "Constant",
+  "log(GDP)"    = "GDP",
+  "ENEF"        = "ENEF",
+  "FE"          = "FE",
+  "RDE"         = "RDE"
+)
+
+# 1) 每个 τ 单独估计（保持你原来的 br 方法）
+qr_models <- purrr::map(taus, ~ quantreg::rq(form, data = df, tau = .x, method = "br"))
+
+# 2) 一个 τ 的系数→tibble（保证一定有 Term 列）
+get_tau_df <- function(mod, tau){
+  sm  <- summary(mod, se = "nid")                 # 与你一致：nid
+  cfm <- as.matrix(sm$coefficients)
+  rn  <- rownames(cfm); if (is.null(rn)) rn <- names(coef(mod))
+  tibble(
+    Term     = rn,
+    Estimate = cfm[, 1],
+    SE       = cfm[, 2],
+    Tau      = tau
+  )
+}
+
+# 3) 绑定所有 τ，并只保留需要的项
+tau_tbl <- purrr::map2_dfr(qr_models, taus, get_tau_df) %>%
+  filter(Term %in% term_order)
+
+# 3') 由三组分位数系数反推 Location θ 与 Scale γ
+beta_wide <- tau_tbl %>%
+  select(Term, Tau, Estimate) %>%
+  tidyr::pivot_wider(names_from = Tau, values_from = Estimate)
+
+theta_hat <- beta_wide %>% transmute(Term, theta = `0.5`)
+gamma_hat <- beta_wide %>%
+  transmute(Term, gamma = (`0.75` - `0.25`) / (qvec["Q75"] - qvec["Q25"]))
+
+# 4) bootstrap θ 和 γ 的 SE（对 df 进行重抽样）
+boot_once <- function(df_boot){
+  idx <- sample.int(nrow(df_boot), replace = TRUE)
+  # 逐 tau 估计，保证维度稳定
+  coef_cols <- lapply(taus, function(tau){
+    fit_tau <- try(quantreg::rq(form, data = df_boot[idx, ], tau = tau, method = "br"), silent = TRUE)
+    if (inherits(fit_tau, "try-error")) return(rep(NA_real_, length(term_order)))
+    cf <- coef(fit_tau)
+    out <- rep(NA_real_, length(term_order)); names(out) <- term_order
+    out[names(cf)] <- unname(cf)
+    out
+  })
+  CF <- do.call(cbind, coef_cols)    # 行=term_order, 列=taus
+  colnames(CF) <- paste0("tau", taus)
+
+  i25 <- which.min(abs(taus - 0.25))
+  i50 <- which.min(abs(taus - 0.50))
+  i75 <- which.min(abs(taus - 0.75))
+
+  theta <- CF[, i50]                                           # θ = β(0.5)
+  gamma <- (CF[, i75] - CF[, i25]) / as.numeric(qvec["Q75"] - qvec["Q25"])
+  list(theta = theta, gamma = gamma)
+}
+
+set.seed(123)
+B <- 400
+boot_res <- replicate(B, boot_once(df), simplify = FALSE)
+
+theta_mat <- do.call(cbind, lapply(boot_res, `[[`, "theta"))
+gamma_mat <- do.call(cbind, lapply(boot_res, `[[`, "gamma"))
+
+theta_se <- tibble(Term = term_order, se_theta = apply(theta_mat, 1, sd, na.rm = TRUE))
+gamma_se <- tibble(Term = term_order, se_gamma = apply(gamma_mat, 1, sd, na.rm = TRUE))
+
+# 合并 θ/γ 与 SE，并生成显著性星号
+loc_scale <- theta_hat %>%
+  inner_join(theta_se, by="Term") %>%
+  inner_join(gamma_hat, by="Term") %>%
+  inner_join(gamma_se, by="Term") %>%
+  mutate(
+    t_loc = theta / se_theta,
+    p_loc = 2*pnorm(-abs(t_loc)),
+    t_sca = gamma / se_gamma,
+    p_sca = 2*pnorm(-abs(t_sca)),
+    Location = sprintf("%.3f%s (%.3f)", theta,
+                       ifelse(p_loc<.01,"***", ifelse(p_loc<.05,"**", ifelse(p_loc<.1,"*",""))),
+                       se_theta),
+    Scale    = sprintf("%.3f%s (%.3f)", gamma,
+                       ifelse(p_sca<.01,"***", ifelse(p_sca<.05,"**", ifelse(p_sca<.1,"*",""))),
+                       se_gamma)
+  ) %>%
+  select(Term, Location, Scale)
+
+# 5) 三个分位数列（格式：coef*** (se)）
+quant_cols <- tau_tbl %>%
+  mutate(
+    star = ifelse(2*pnorm(-abs(Estimate/SE))<.01,"***",
+           ifelse(2*pnorm(-abs(Estimate/SE))<.05,"**",
+           ifelse(2*pnorm(-abs(Estimate/SE))<.1,"*",""))),
+    cell = sprintf("%.3f%s (%.3f)", Estimate, star, SE),
+    Qlab = paste0("Q", sprintf("%.2f", Tau))
+  ) %>%
+  select(Term, Qlab, cell) %>%
+  tidyr::pivot_wider(names_from = Qlab, values_from = cell)
+
+# 6) 组装表（按原文的行顺序与命名）
+table5 <- loc_scale %>%
+  inner_join(quant_cols, by = "Term") %>%
+  filter(Term %in% term_order) %>%
+  mutate(Variable = unname(term_labels[Term])) %>%   # ★ 使用命名向量安全映射
+  select(Variable, Location, Scale, `Q0.25`, `Q0.50`, `Q0.75`)
+
+# 7) 打印（与原文标题/脚注样式）
+knitr::kable(
+  table5,
+  booktabs = TRUE,
+  align = c("l","c","c","c","c","c"),
+  col.names = c("Variable","Location","Scale","Quantiles\nQ_{0.25}","Q_{0.50}","Q_{0.75}"),
+  caption = "Table 5  Quantile regression results"
+) %>%
+  kable_classic(full_width = FALSE) %>%
+  footnote(
+    general = "Dependent variable: ln(CO2). Asterisks indicate 1% (***), 5% (**), and 10% (*). Location and Scale come from β(τ)=θ+q_τγ with q_τ from the standard logistic; s.e. for θ,γ via bootstrap (B=400).",
+    threeparttable = TRUE
+  )
+
+```  
+
+# Table 6: Robustness - Bootstrap Quantile Regression (BSQR)
+
+```{r table6-bsqr, results='asis'}
+# —— 设定 ——
+taus <- c(0.25, 0.50, 0.75)
+# 原文 Table 6 说明 dependent variable 是 CO2（不是 ln(CO2)）
+form_bsqr <- CO2 ~ log(GDP) + ENEF + FE + RDE
+term_order  <- c("(Intercept)","log(GDP)","ENEF","FE","RDE")
+term_labels <- c("Constant","GDP","ENEF","FE","RDE")
+B_boot <- 400   # 正稿可提到 800–1000
+
+# —— 每个 τ 拟合 rq 并用 bootstrap 得到 SE ——
+fits <- map(taus, ~ rq(form_bsqr, data = data, tau = .x, method = "br"))
+sums <- map(fits, ~ summary(.x, se = "boot", R = B_boot))
+
+# —— 抽取系数 + SE，并生成星号（系数单元格不放括号） ——
+star <- function(p) ifelse(p<.01,"***", ifelse(p<.05,"**", ifelse(p<.1,"*","")))
+
+one_tau <- function(su, tau){
+  cf <- su$coefficients
+  df <- tibble(
+    Term  = rownames(cf),
+    beta  = cf[,1],
+    se    = cf[,2]
+  ) %>% filter(Term %in% term_order) %>%
+    mutate(p = 2*pnorm(-abs(beta/se)),
+           est = sprintf("%.3f%s", beta, star(p)),
+           se_f= sprintf("%.3f", se),
+           Q   = paste0("Q", sprintf("%.2f", tau)))
+  df
+}
+
+stack <- map2_dfr(sums, taus, one_tau)
+
+# —— 宽表：每个分位数两列（coef* 与 Std. err） ——
+wide <- stack %>%
+  select(Term, Q, est, se_f) %>%
+  pivot_wider(
+    names_from = Q,
+    values_from = c(est, se_f),
+    names_sep = "_"
+  )
+
+# —— 排序与重命名，匹配原文列标题 ——
+tbl6 <- wide %>%
+  slice(match(term_order, Term)) %>%
+  mutate(Variable = term_labels[match(Term, term_order)]) %>%
+  transmute(
+    Variable,
+    `Q0.25`   = est_Q0.25, `Std. err`  = se_f_Q0.25,
+    `Q0.50`   = est_Q0.50, `Std. err1` = se_f_Q0.50,   # 临时列名，打印时统一成“Std. err”
+    `Q0.75`   = est_Q0.75, `Std. err2` = se_f_Q0.75
+  )
+
+# —— 打印（与原文风格） ——
+knitr::kable(
+  tbl6,
+  booktabs = TRUE,
+  align = c("l","c","c","c","c","c","c"),
+  col.names = c("Variable",
+                "Q_{0.25}","Std. err",
+                "Q_{0.50}","Std. err",
+                "Q_{0.75}","Std. err"),
+  caption = "Table 6  Robustness analysis results"
+) %>%
+  kable_classic(full_width = FALSE) %>%
+  footnote(
+    general = paste0(
+      "The dependent variable is CO2. Asterisks indicate a statistical significance level of 1% (***), ",
+      "5% (**), and 10% (*). Standard errors are bootstrap (R=", B_boot, ")."
+    ),
+    threeparttable = TRUE
+  )
+```  
+
+# Table 7: Robustness - CS-ARDL Results
+
+```{r table7-cs-ardl, results='asis'}
+df <- tibble(
+  country = pdat$country, year = pdat$year,
+  CO2  = pdat$CO2,  GDP  = pdat$GDP,  ENEF = pdat$ENEF, FE = pdat$FE, RDE = pdat$RDE,
+  L1_CO2  = lag(pdat$CO2, 1),
+  L1_GDP  = lag(pdat$GDP, 1),
+  L1_ENEF = lag(pdat$ENEF,1),
+  L1_FE   = lag(pdat$FE,  1),
+  L1_RDE  = lag(pdat$RDE, 1),
+  dCO2  = diff(pdat$CO2),
+  dGDP  = diff(pdat$GDP),
+  dENEF = diff(pdat$ENEF),
+  dFE   = diff(pdat$FE),
+  dRDE  = diff(pdat$RDE),
+  dL1_CO2 = lag(diff(pdat$CO2), 1)
+) %>%
+  group_by(year) %>%
+  mutate(
+    cs_CO2  = mean(CO2,  na.rm=TRUE), cs_L1_CO2  = dplyr::lag(cs_CO2,  1),
+    cs_GDP  = mean(GDP,  na.rm=TRUE), cs_L1_GDP  = dplyr::lag(cs_GDP,  1),
+    cs_ENEF = mean(ENEF, na.rm=TRUE), cs_L1_ENEF = dplyr::lag(cs_ENEF, 1),
+    cs_FE   = mean(FE,   na.rm=TRUE), cs_L1_FE   = dplyr::lag(cs_FE,   1),
+    cs_RDE  = mean(RDE,  na.rm=TRUE), cs_L1_RDE  = dplyr::lag(cs_RDE,  1)
+  ) %>% ungroup()
+
+# 用到的列
+rhs_base <- c("L1_CO2","L1_GDP","L1_ENEF","L1_FE","L1_RDE",
+              "dL1_CO2","dGDP","dENEF","dFE","dRDE",
+              "cs_CO2","cs_GDP","cs_ENEF","cs_FE","cs_RDE",
+              "cs_L1_CO2","cs_L1_GDP","cs_L1_ENEF","cs_L1_FE","cs_L1_RDE")
+
+# ---------- 2) 对每个国家单独估计（CCE-MG），取系数 ----------
+fit_one <- function(dd){
+  dd <- dd %>% filter(complete.cases(dCO2, !!!rlang::syms(rhs_base)))
+  if(nrow(dd) < 15) return(NULL)
+  fml <- reformulate(rhs_base, response = "dCO2")
+  m   <- lm(fml, data = dd)
+  # 用 Newey-West/HAC 稳健协方差（时间序列）
+  Lnw <- floor(4*(nrow(dd)/100)^(2/9))
+  V   <- tryCatch(sandwich::NeweyWest(m, lag = Lnw, prewhite = FALSE), error = function(e) sandwich::vcovHC(m, type="HC1"))
+  co  <- broom::tidy(m, conf.int = FALSE)
+  co$se <- sqrt(diag(V))[match(co$term, names(coef(m)))]
+  list(model = m, coef = co, vcov = V)
+}
+
+by_cty <- df %>% group_by(country) %>% group_split()
+res_cty <- map(by_cty, fit_one) %>% compact()
+
+# ---------- 3) 聚合：短期（dL1_CO2, dGDP, dENEF, dFE, dRDE） ----------
+need_short <- c("dL1_CO2","dGDP","dENEF","dFE","dRDE")
+get_term <- function(term){
+  betas <- map_dbl(res_cty, ~ .x$coef$estimate[.x$coef$term==term] %||% NA_real_)
+  mu <- mean(betas, na.rm=TRUE)
+  se <- sd(betas,  na.rm=TRUE) / sqrt(sum(!is.na(betas)))  # MG s.e.
+  z  <- mu / se
+  c(est=mu, se=se, z=z)
+}
+S_mat <- sapply(need_short, get_term)
+
+short_labs <- c("LCO\u2082","GDP","ENEF","FE","RDE")
+short_tab <- tibble(
+  Variable = factor(short_labs, levels = short_labs),
+  est = S_mat["est",], se = S_mat["se",], z = S_mat["z",]
+) %>%
+  mutate(p = 2*pnorm(-abs(z)),
+         star = ifelse(p<.01,"***", ifelse(p<.05,"**", ifelse(p<.1,"*",""))),
+         Coeff = sprintf("%.3f%s", est, star),
+         `Std. err.` = sprintf("%.3f", se),
+         `Z-stats`   = sprintf("%.3f", z),
+         Section = "Short-run estimates") %>%
+  select(Section, Variable, Coeff, `Std. err.`, `Z-stats`)
+
+# ---------- 4) 长期：LR_k = −β_k / φ，ECT = φ ----------
+# 逐国取 φ 与 β_k 并做 Delta 后的 LR_i，再做 MG
+pull_phi <- function(rc) rc$coef$estimate[rc$coef$term=="L1_CO2"] %||% NA_real_
+
+phi_i <- map_dbl(res_cty, pull_phi)
+ECT_est <- mean(phi_i, na.rm=TRUE)
+ECT_se  <- sd(phi_i, na.rm=TRUE) / sqrt(sum(!is.na(phi_i)))
+ECT_z   <- ECT_est / ECT_se
+
+LR_terms <- c("L1_GDP"="GDP","L1_ENEF"="ENEF","L1_FE"="FE","L1_RDE"="RDE")
+
+LR_row <- function(bname){
+  b_i <- map_dbl(res_cty, ~ .x$coef$estimate[.x$coef$term==bname] %||% NA_real_)
+  lr_i <- - b_i / phi_i
+  mu <- mean(lr_i, na.rm=TRUE)
+  se <- sd(lr_i,  na.rm=TRUE) / sqrt(sum(!is.na(lr_i)))
+  z  <- mu / se
+  c(est=mu, se=se, z=z)
+}
+
+LR_mat <- sapply(names(LR_terms), LR_row)
+
+long_tab <- tibble(
+  Variable = factor(unname(LR_terms), levels = unname(LR_terms)),
+  est = LR_mat["est",], se = LR_mat["se",], z = LR_mat["z",]
+) %>%
+  mutate(p = 2*pnorm(-abs(z)),
+         star = ifelse(p<.01,"***", ifelse(p<.05,"**", ifelse(p<.1,"*",""))),
+         Coeff = sprintf("%.3f%s", est, star),
+         `Std. err.` = sprintf("%.3f", se),
+         `Z-stats`   = sprintf("%.3f", z),
+         Section = "Long-run estimates") %>%
+  select(Section, Variable, Coeff, `Std. err.`, `Z-stats`)
+
+ECT_row <- tibble(
+  Section = "Long-run estimates",
+  Variable = factor("ECT", levels = c(levels(long_tab$Variable), "ECT")),
+  Coeff = sprintf("%.3f%s", ECT_est, ifelse(2*pnorm(-abs(ECT_z))<.01,"***",
+                                   ifelse(2*pnorm(-abs(ECT_z))<.05,"**",
+                                   ifelse(2*pnorm(-abs(ECT_z))<.1,"*","")))),
+  `Std. err.` = sprintf("%.3f", ECT_se),
+  `Z-stats`   = sprintf("%.3f", ECT_z)
+)
+
+# ---------- 5) 合并打印（与原文样式一致） ----------
+full_tab <- bind_rows(short_tab, long_tab, ECT_row)
+
+knitr::kable(
+  full_tab %>% select(Variable, Coeff, `Std. err.`, `Z-stats`),
+  booktabs = TRUE,
+  align = c("l","c","c","c"),
+  col.names = c("Variable","Coeff.","Std. err.","Z-stats"),
+  caption = "Table 7  Robustness test—CS-ARDL (CCEMG, manual)"
+) %>%
+  kable_classic(full_width = FALSE) %>%
+  pack_rows("Short-run estimates", 1, nrow(short_tab)) %>%
+  pack_rows("Long-run estimates",  nrow(short_tab)+1, nrow(short_tab)+nrow(long_tab)+1) %>%
+  footnote(
+    general = "CCEMG estimated by country-specific OLS with cross-sectional averages (t and t-1) of CO2,GDP,ENEF,FE,RDE. Mean-Group aggregation: coef. = cross-section mean; s.e. = cross-section sd / sqrt(N); z = coef. / s.e. Long-run effects computed as −β/φ with φ the coefficient on CO2_{t−1}; ECT is the cross-section mean of φ.",
+    threeparttable = TRUE
+  )
+```
+# Figure 1: Energy Efficiency in emerging economies
+```{r fig1-energy-efficiency, fig.cap="Fig.1 Energy Efficiency in emerging economies"}
+# Plot Energy Efficiency over time by country
+ggplot(data, aes(x = year, y = ENEF, color = country)) +
+  geom_line(size = 1) +
+  labs(x = "Year", y = "Energy Efficiency", title = "Energy Efficiency in emerging economies") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Figure 2: Financial Expansion in emerging economies
+```{r fig2-financial-expansion, fig.cap="Fig.2 Financial Expansion in emerging economies"}
+# Plot Financial Expansion over time by country
+ggplot(data, aes(x = year, y = FE, color = country)) +
+  geom_line(size = 1) +
+  labs(x = "Year", y = "Domestic credit to private sector (% of GDP)",
+       title = "Financial Expansion in emerging economies") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Figure 3: Graphical representation of coefficients—MMQR
+```{r fig3-mmqr-coefs, fig.cap="Fig.3 Graphical representation of coefficients—MMQR"}
+# Define quantiles and variables
+taus <- c(0.25, 0.5, 0.75)
+vars <- c("GDP", "ENEF", "FE", "RDE")
+
+# Compute quantile regression estimates and bootstrap SEs for each variable
+qr_res <- lapply(vars, function(v) {
+  df <- data %>% mutate(x = .data[[v]], y = log(CO2))
+  # Fit a separate quantile regression of log(CO2) on x
+  models <- lapply(taus, function(tau) rq(y ~ x, data = df, tau = tau))
+  # Extract coefficient and bootstrap SE for slope
+  est <- sapply(models, function(m) coef(m)[2])
+  se  <- sapply(models, function(m) summary(m, se = "boot", R = 200)$coefficients[2,2])
+  tibble(
+    Variable = v,
+    Quantile = taus * 100,
+    Estimate = est,
+    Std.Error = se,
+    CI_low = Estimate - 1.96 * Std.Error,
+    CI_high = Estimate + 1.96 * Std.Error
+  )
+}) %>% bind_rows()
+
+# Compute OLS reference and its CI for each variable
+ols_res <- lapply(vars, function(v) {
+  df <- data %>% mutate(x = .data[[v]], y = log(CO2))
+  fit <- lm(y ~ x, data = df)
+  ci  <- confint(fit)["x", ]
+  tibble(
+    Variable = v,
+    OLS = coef(fit)[2],
+    OLS_low = ci[1],
+    OLS_high = ci[2]
+  )
+}) %>% bind_rows()
+
+# Generate individual plots
+plot_list <- lapply(vars, function(v) {
+  dfv <- qr_res %>% filter(Variable == v)
+  ols_v <- ols_res %>% filter(Variable == v)
+  title_map <- c(
+    GDP = "GDP",
+    ENEF = "ENEF",
+    FE = "FE",
+    RDE = "RDE"
+  )
+  ggplot(dfv, aes(x = Quantile, y = Estimate)) +
+    geom_ribbon(aes(ymin = CI_low, ymax = CI_high), fill = 'grey80', alpha = 0.5) +
+    geom_line(color = 'red', size = 0.8) +
+    geom_hline(yintercept = ols_v$OLS, color = 'black') +
+    geom_hline(yintercept = ols_v$OLS_low, linetype = 'dashed') +
+    geom_hline(yintercept = ols_v$OLS_high, linetype = 'dashed') +
+    labs(title = title_map[v], x = "Quantile", y = "Coefficient") +
+    scale_x_continuous(breaks = c(0, 25, 50, 75, 100)) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.title.x = element_blank(),
+      panel.grid.minor = element_blank()
+    )
+})
+
+# Arrange into 2x2 grid matching original layout
+grid_plot <- (plot_list[[1]] + plot_list[[2]]) / (plot_list[[3]] + plot_list[[4]])
+print(grid_plot)
+```
+
+
