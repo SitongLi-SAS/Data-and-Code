@@ -1,0 +1,355 @@
+---
+title: "Replication of R11 Tables & Figures"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+# General setup
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE,
+                      fig.width=6, fig.height=4)
+# Load required libraries
+library(tidyverse)
+library(kableExtra)
+library(broom)
+library(reshape2)
+library(ggrepel)
+library(patchwork)
+```
+
+## Load Data
+
+```{r load-data}
+# Panel dataset: 1990–2012 for social contribution & GDP per capita
+panel <- read.csv("R11_panel_data.csv")
+# Empire cross-section: 1878, 1913, 1933
+empire <- read.csv("R11_empire_data.csv")
+# Regression subset: years 2002, 2007, 2012
+reg <- read.csv("R11_regression_data.csv")
+```
+
+# Table 1: Descriptive by Income Half (2012)
+```{r table1, results='asis'}
+# Subset 2012 and compute per capita GDP median
+df2012 <- panel %>% filter(Year==2012)
+median_gdp <- median(df2012$GDP_perCapita_PPP)
+# Tag high/low income half
+df2012 <- df2012 %>%
+  mutate(Group = if_else(GDP_perCapita_PPP >= median_gdp,
+                         "High-income half", "Low-income half"))
+# Summarise group stats
+tbl1 <- df2012 %>%
+  group_by(Group) %>%
+  summarise(
+    N   = n(),
+    Mean = mean(SocialContribRate),
+    SD   = sd(SocialContribRate),
+    CV   = SD / Mean
+  )
+# Render table
+knitr::kable(tbl1, booktabs=TRUE, digits=2,
+             caption = "Table 1. Social contribution rate inequality by income half (2012)") %>%
+  kable_styling(full_width=FALSE)
+```
+
+# Table 2: Colonial Empires Land & Population Shares
+```{r table2, results='asis'}
+tbl2 <- empire %>%
+  select(Country, Year, LandShare, PopShare) %>%
+  pivot_wider(names_from = Year, values_from = LandShare, names_prefix = "Land_") %>%
+  left_join(
+    empire %>%
+      select(Country, Year, PopShare) %>%
+      pivot_wider(names_from = Year, values_from = PopShare, names_prefix = "Pop_"),
+    by = "Country"
+  ) %>%
+  # Optional: sort by country name
+  arrange(Country)
+
+# 7) Render the table
+knitr::kable(
+  tbl2, booktabs = TRUE, digits = 1,
+  caption = "Table 2. Colonial empire land and population shares (%)"
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Tables 3–5: OLS Regressions in 2002, 2007, 2012
+```{r table3_5, results='asis'}
+run_model <- function(year) {
+  df <- reg %>% filter(Year == year)
+  models <- list(
+    lm(SocialContribRate ~ GDP_perCapita_PPP, data = df),
+    lm(SocialContribRate ~ GDP_perCapita_PPP + Colonizer, data = df),
+    lm(SocialContribRate ~ GDP_perCapita_PPP + Colonizer + Post_Socialist, data = df),
+    lm(SocialContribRate ~ GDP_perCapita_PPP + Colonizer + Post_Socialist + Post1945_Colony, data = df)
+  )
+  bind_rows(lapply(seq_along(models), function(i) {
+    broom::tidy(models[[i]]) %>%
+      mutate(
+        Year = year,
+        Model = as.integer(i),
+        significance = case_when(
+          p.value < 0.01 ~ "**",
+          p.value < 0.05 ~ "*",
+          TRUE ~ ""
+        )
+      )
+  }))
+}
+
+# Compile regression outputs for years 2002, 2007, 2012
+tbl3to5 <- bind_rows(run_model(2002), run_model(2007), run_model(2012))
+
+# Compute N and R² for each model
+model_stats <- bind_rows(lapply(c(2002, 2007, 2012), function(y) {
+  df <- reg %>% filter(Year == y)
+  stats <- lapply(list(
+    lm(SocialContribRate ~ GDP_perCapita_PPP, data = df),
+    lm(SocialContribRate ~ GDP_perCapita_PPP + Colonizer, data = df),
+    lm(SocialContribRate ~ GDP_perCapita_PPP + Colonizer + Post_Socialist, data = df),
+    lm(SocialContribRate ~ GDP_perCapita_PPP + Colonizer + Post_Socialist + Post1945_Colony, data = df)
+  ), function(m) {
+    data.frame(
+      N = length(m$fitted.values),
+      R2 = summary(m)$r.squared
+    )
+  })
+  stats_df <- do.call(rbind, stats)
+  stats_df$Year <- y
+  stats_df$Model <- seq_len(nrow(stats_df))
+  stats_df
+}))
+
+# Merge regression output with model statistics
+tbl_reg <- tbl3to5 %>%
+  left_join(model_stats, by = c("Year", "Model")) %>%
+  select(Year, Model, term, estimate, std.error, p.value, significance, N, R2)
+
+# Render each year's table in the format of R11 original, including significance stars and p-values
+for (y in c(2002, 2007, 2012)) {
+  cat(sprintf("**Table %d: OLS Regression Results**\n\n", y))
+  sub <- tbl_reg %>% filter(Year == y)
+  kt <- sub %>%
+    mutate(
+      Estimate = sprintf("%.3f%s", estimate, significance),
+      `Std. Error` = sprintf("(%.3f)", std.error),
+      `p-value` = sprintf("%.3f", p.value)
+    ) %>%
+    select(Term = term, Estimate, `Std. Error`, `p-value`, N, R2)
+  print(
+    knitr::kable(
+      kt, booktabs = TRUE, align = "lcccc", digits = 3,
+      caption = paste0("OLS Regression (", y, ")")
+    ) %>%
+      kable_styling(full_width = FALSE)
+  )
+}
+
+```
+
+# Figure 1: Yearly Corr(GDP, Social) & Mean SocialContribution
+```{r fig1, fig.cap="Fig.1 Annual correlation and mean social contribution rates (1990–2012)"}
+stats_year <- panel %>%
+  group_by(Year) %>%
+  summarise(
+    Corr = cor(GDP_perCapita_PPP, SocialContribRate),
+    MeanSC = mean(SocialContribRate)
+  )
+# Dual-axis plot
+ggplot(stats_year, aes(x=Year)) +
+  geom_line(aes(y=Corr), color='blue') +
+  geom_line(aes(y=MeanSC/10), color='green') +
+  scale_y_continuous(
+    name = "Correlation",
+    sec.axis = sec_axis(~.*100, name = "Mean Social Contribution (%)")
+  ) +
+  theme_minimal()
+```
+# Figure 2–5: EU Core & All scatter and cluster
+
+```{r fig2, fig.cap="Fig.2 Core EU 1995–2012", fig.width=6, fig.height=4}
+library(ggrepel)
+df95 <- panel %>% filter(Year >= 1995 & Year <= 2012)
+p2 <- ggplot(df95 %>% filter(Core_EU == 1), aes(RelWealth, SocialContribRate)) +
+  geom_point(color="#1f78b4", alpha=0.6, size=2) +
+  geom_text_repel(aes(label=Country), size=2, max.overlaps=10) +
+  labs(x="Relative Wealth (%)", y="Social Contribution Rate (%)") +
+  theme_minimal()
+print(p2)
+
+df95 <- panel %>% filter(Year >= 1995 & Year <= 2012)
+p3_data <- df95 %>%
+  filter(Core_EU == 1) %>%
+  group_by(Year) %>%
+  summarise(
+    RelWealth = mean(RelWealth),
+    SocialContribRate = mean(SocialContribRate)
+  )
+p3 <- ggplot(p3_data, aes(x = RelWealth, y = SocialContribRate)) +
+  geom_path(color = "#1f78b4", size = 1) +
+  geom_point(color = "#1f78b4", size = 3) +
+  geom_text_repel(aes(label = Year), size = 2, nudge_y = 0.2) +
+  labs(
+    title = "Core EU cluster (1995–2012)",
+    x = "Relative Wealth (%)",
+    y = "Social Contribution Rate (%)"
+  ) +
+  theme_minimal()
+print(p3)
+
+p4 <- ggplot(df95 %>% filter(All_EU == 1), aes(RelWealth, SocialContribRate)) +
+  geom_point(color="#33a02c", alpha=0.6, size=2) +
+  geom_text_repel(aes(label=Country), size=2, max.overlaps=10) +
+  labs(x="Relative Wealth (%)", y="Social Contribution Rate (%)") +
+  theme_minimal()
+print(p4)
+
+df95 <- panel %>% filter(Year >= 1995 & Year <= 2012)
+p5_data <- df95 %>%
+  filter(All_EU == 1) %>%
+  group_by(Year, Core_EU) %>%
+  summarise(
+    RelWealth = mean(RelWealth),
+    SocialContribRate = mean(SocialContribRate)
+  )
+p5 <- ggplot(p5_data, aes(x = RelWealth, y = SocialContribRate,
+                          group = factor(Core_EU), 
+                          color = factor(Core_EU))) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c("0" = "#a6cee3", "1" = "#1f78b4"),
+    labels = c("New member", "Core EU"),
+    name = NULL
+  ) +
+  labs(
+    title = "All EU: Core vs New (1995–2012)",
+    x = "Relative Wealth (%)",
+    y = "Social Contribution Rate (%)"
+  ) +
+  theme_minimal()
+print(p5)
+```
+
+# Figure 6: EU vs Post-socialist scatter (1995–2012)
+```{r fig6, fig.cap="Fig.6 EU vs Post-socialist scatter (1995–2012)", fig.width=6, fig.height=4}
+library(ggrepel)
+df95 <- panel %>% filter(Year >= 1995 & Year <= 2012)
+p6 <- ggplot(df95, aes(x = RelWealth, y = SocialContribRate,
+                       color = factor(Core_EU + 2 * Post_Socialist))) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(
+    name = "Group",
+    values = c("0" = "gray70", "1" = "#1f78b4", "2" = "#e31a1c"),
+    labels = c("Other", "Core EU", "Post-socialist")
+  ) +
+  labs(x = "Relative Wealth (%)",
+       y = "Social Contribution Rate (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+print(p6)
+```
+
+# Figure 7: EU vs Post-socialist cluster trajectories (1995–2012)
+```{r fig7, fig.cap="Fig.7 EU vs Post-socialist cluster trajectories (1995–2012)", fig.width=6, fig.height=4}
+# Compute annual centroids for each group
+p7_data <- df95 %>%
+  group_by(Year, group = Core_EU + 2 * Post_Socialist) %>%
+  summarise(
+    RelWealth = mean(RelWealth),
+    SocialContribRate = mean(SocialContribRate),
+    .groups = "drop"
+  )
+# Plot trajectories with year labels
+ggplot(p7_data, aes(x = RelWealth, y = SocialContribRate,
+                    color = factor(group), group = factor(group))) +
+  geom_path(size = 1) +
+  geom_point(size = 3) +
+  geom_text_repel(aes(label = Year), size = 2, nudge_y = 0.2) +
+  scale_color_manual(
+    name = "Group",
+    values = c("0" = "gray70", "1" = "#1f78b4", "2" = "#e31a1c"),
+    labels = c("Other", "Core EU", "Post-socialist")
+  ) +
+  labs(
+    x = "Relative Wealth (%)",
+    y = "Social Contribution Rate (%)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Figure 8: EU + Post-socialist + LATAM scatter (1995–2012)
+```{r fig8, fig.cap="Fig.8 EU + Post-socialist + LATAM scatter (1995–2012)", fig.width=6, fig.height=4}
+# define exclusive group labels
+plot8_df <- panel %>%
+  filter(Year >= 1995 & Year <= 2012) %>%
+  mutate(Group = case_when(
+    LATAM == 1               ~ "LATAM",
+    Post_Socialist == 1       ~ "Post-socialist",
+    Core_EU == 1              ~ "Core EU",
+    TRUE                      ~ "Other"
+  ))
+# scatter plot colored by Group
+p8 <- ggplot(plot8_df, aes(x = RelWealth, y = SocialContribRate, color = Group)) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_manual(
+    values = c(
+      "Other"        = "gray70",
+      "Core EU"      = "#1f78b4",
+      "Post-socialist"= "#e31a1c",
+      "LATAM"        = "#33a02c"
+    )
+  ) +
+  labs(
+    title = "EU + Post-socialist + LATAM
+(1995–2012)",
+    x = "Relative Wealth (%)",
+    y = "Social Contribution Rate (%)",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+print(p8)
+```
+
+# Figure 9: EU + Post-socialist + LATAM cluster centroids
+```{r fig9, fig.cap="Fig.9 EU + Post-socialist + LATAM cluster centroids", fig.width=6, fig.height=4}
+data9 <- plot8_df %>%
+  group_by(Year, Group) %>%
+  summarise(
+    RelWealth         = mean(RelWealth),
+    SocialContribRate = mean(SocialContribRate),
+    .groups = "drop"
+  )
+
+ggplot(data9, aes(x = RelWealth, y = SocialContribRate, 
+                  color = Group, group = Group)) +
+  geom_path(size = 1) +
+  geom_point(size = 3) +
+  geom_text_repel(aes(label = Year), size = 2, nudge_y = 0.2) +
+  scale_color_manual(
+    values = c(
+      "Other"         = "gray70",
+      "Core EU"       = "#1f78b4",
+      "Post-socialist"= "#e31a1c",
+      "LATAM"         = "#33a02c"
+    )
+  ) +
+  labs(
+    x = "Relative Wealth (%)",
+    y = "Social Contribution Rate (%)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Figure 10: Global scatter (1995–2012)
+```{r fig10, fig.cap="Fig.10 Global scatter social contribution vs relative wealth"}
+k <- ggplot(df95, aes(x=RelWealth,y=SocialContribRate)) +
+  geom_point(alpha=0.3, color='darkgray') +
+  ggtitle("Global 1995–2012") + theme_minimal()
+print(k)
